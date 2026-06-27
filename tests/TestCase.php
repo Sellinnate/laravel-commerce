@@ -1,10 +1,18 @@
 <?php
 
-namespace VendorName\Skeleton\Tests;
+declare(strict_types=1);
+
+namespace Selli\Commerce\Tests;
 
 use Illuminate\Database\Eloquent\Factories\Factory;
+use Illuminate\Database\Eloquent\Relations\Relation;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Foundation\Application;
+use Illuminate\Support\Facades\Schema;
 use Orchestra\Testbench\TestCase as Orchestra;
-use VendorName\Skeleton\SkeletonServiceProvider;
+use Selli\Commerce\CommerceServiceProvider;
+use Selli\Commerce\Tests\Fixtures\Customer;
+use Selli\Commerce\Tests\Fixtures\Product;
 
 class TestCase extends Orchestra
 {
@@ -13,25 +21,63 @@ class TestCase extends Orchestra
         parent::setUp();
 
         Factory::guessFactoryNamesUsing(
-            fn (string $modelName) => 'VendorName\\Skeleton\\Database\\Factories\\'.class_basename($modelName).'Factory'
+            fn (string $modelName): string => 'Selli\\Commerce\\Database\\Factories\\'.class_basename($modelName).'Factory'
         );
+
+        Relation::enforceMorphMap([
+            'product' => Product::class,
+            'customer' => Customer::class,
+        ]);
+
+        $this->setUpFixtureTables();
     }
 
-    protected function getPackageProviders($app)
+    /**
+     * @param  Application  $app
+     * @return array<int, class-string>
+     */
+    protected function getPackageProviders($app): array
     {
         return [
-            SkeletonServiceProvider::class,
+            CommerceServiceProvider::class,
         ];
     }
 
-    public function getEnvironmentSetUp($app)
+    /**
+     * @param  Application  $app
+     */
+    public function getEnvironmentSetUp($app): void
     {
         config()->set('database.default', 'testing');
+        config()->set('database.connections.testing', [
+            'driver' => 'sqlite',
+            'database' => ':memory:',
+            'prefix' => '',
+        ]);
+    }
 
-        /*
-         foreach (\Illuminate\Support\Facades\File::allFiles(__DIR__ . '/../database/migrations') as $migration) {
-            (include $migration->getRealPath())->up();
-         }
-         */
+    private function setUpFixtureTables(): void
+    {
+        if (! Schema::hasTable('products')) {
+            Schema::create('products', function (Blueprint $table): void {
+                $table->ulid('id')->primary();
+                $table->string('name');
+                $table->string('sku')->nullable();
+                $table->bigInteger('price_cents')->default(0);
+                $table->char('currency', 3)->default('EUR');
+                $table->boolean('available')->default(true);
+                $table->integer('stock')->nullable();
+                $table->json('data')->nullable();
+                $table->timestamps();
+            });
+        }
+
+        if (! Schema::hasTable('customers')) {
+            Schema::create('customers', function (Blueprint $table): void {
+                $table->ulid('id')->primary();
+                $table->string('name')->nullable();
+                $table->timestamps();
+            });
+        }
     }
 }

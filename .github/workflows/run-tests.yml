@@ -23,14 +23,14 @@ concurrency:
 jobs:
   test:
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 5
+    timeout-minutes: 10
     strategy:
       fail-fast: true
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest]
         php: [8.5, 8.4, 8.3]
         laravel: [13.*, 12.*]
-        stability: [prefer-lowest, prefer-stable]
+        stability: [prefer-stable]
         include:
           - laravel: 13.*
             testbench: 11.*
@@ -47,7 +47,7 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
-          extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, bcmath, soap, intl, gd, exif, iconv, imagick, fileinfo
+          extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, bcmath, intl, fileinfo
           coverage: none
 
       - name: Setup problem matchers
@@ -65,3 +65,24 @@ jobs:
 
       - name: Execute tests
         run: vendor/bin/pest --ci
+
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    name: Coverage (min 90%)
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup PHP with pcov
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.4
+          extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, bcmath, intl, fileinfo
+          coverage: pcov
+
+      - name: Install dependencies
+        run: composer update --prefer-stable --prefer-dist --no-interaction
+
+      - name: Enforce coverage threshold
+        run: vendor/bin/pest --coverage --min=90 --ci

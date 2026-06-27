@@ -1,47 +1,66 @@
 {
-    "name": ":vendor_slug/:package_slug",
-    "description": ":package_description",
+    "name": "selli/commerce",
+    "description": "A headless, catalog-agnostic commerce domain engine for Laravel: cart, order lifecycle, deterministic pricing pipeline, tax and inventory — multi-tenant, multi-currency, audited and ACL-protected.",
     "keywords": [
-        ":vendor_name",
+        "selli",
         "laravel",
-        ":package_slug"
+        "commerce",
+        "cart",
+        "order",
+        "ecommerce",
+        "headless",
+        "pricing",
+        "tax",
+        "inventory",
+        "multi-tenant"
     ],
-    "homepage": "https://github.com/:vendor_slug/:package_slug",
+    "homepage": "https://github.com/sellinnate/laravel-commerce",
+    "support": {
+        "issues": "https://github.com/sellinnate/laravel-commerce/issues",
+        "source": "https://github.com/sellinnate/laravel-commerce"
+    },
     "license": "MIT",
     "authors": [
         {
-            "name": ":author_name",
-            "email": "author@domain.com",
+            "name": "Filippo Calabrese",
+            "email": "calabresefilippo@gmail.com",
             "role": "Developer"
         }
     ],
     "require": {
-        "php": "^8.4",
-        "spatie/laravel-package-tools": "^1.16",
-        "illuminate/contracts": "^11.0||^12.0||^13.0"
+        "php": "^8.3",
+        "brick/money": "^0.10 || ^0.11",
+        "illuminate/contracts": "^11.0 || ^12.0 || ^13.0",
+        "spatie/laravel-model-states": "^2.7 || ^3.0",
+        "spatie/laravel-package-tools": "^1.16"
     },
     "require-dev": {
+        "larastan/larastan": "^3.0",
         "laravel/pint": "^1.14",
         "nunomaduro/collision": "^8.8",
-        "larastan/larastan": "^3.0",
-        "orchestra/testbench": "^11.0.0||^10.0.0||^9.0.0",
-        "pestphp/pest": "^4.0",
-        "pestphp/pest-plugin-arch": "^4.0",
-        "pestphp/pest-plugin-laravel": "^4.0",
+        "orchestra/testbench": "^9.0 || ^10.0 || ^11.0",
+        "pestphp/pest": "^3.0",
+        "pestphp/pest-plugin-arch": "^3.0",
+        "pestphp/pest-plugin-laravel": "^3.0",
         "phpstan/extension-installer": "^1.4",
         "phpstan/phpstan-deprecation-rules": "^2.0",
-        "phpstan/phpstan-phpunit": "^2.0",
-        "spatie/laravel-ray": "^1.35"
+        "phpstan/phpstan-phpunit": "^2.0"
+    },
+    "suggest": {
+        "spatie/laravel-event-sourcing": "Required to run the Order aggregate as an event-sourced aggregate (Audit level 2).",
+        "spatie/laravel-permission": "Required for granular role/permission ACL beyond native Gate/Policy.",
+        "stancl/tenancy": "Adapter available to resolve the current tenant from stancl/tenancy.",
+        "spatie/laravel-multitenancy": "Adapter available to resolve the current tenant from spatie/laravel-multitenancy."
     },
     "autoload": {
         "psr-4": {
-            "VendorName\\Skeleton\\": "src/",
-            "VendorName\\Skeleton\\Database\\Factories\\": "database/factories/"
+            "Selli\\Commerce\\": "src/",
+            "Selli\\Commerce\\Database\\Factories\\": "database/factories/"
         }
     },
     "autoload-dev": {
         "psr-4": {
-            "VendorName\\Skeleton\\Tests\\": "tests/",
+            "Selli\\Commerce\\Tests\\": "tests/",
             "Workbench\\App\\": "workbench/app/"
         }
     },
@@ -50,7 +69,7 @@
         "prepare": "@php vendor/bin/testbench package:discover --ansi",
         "analyse": "vendor/bin/phpstan analyse",
         "test": "vendor/bin/pest",
-        "test-coverage": "vendor/bin/pest --coverage",
+        "test-coverage": "vendor/bin/pest --coverage --min=90",
         "format": "vendor/bin/pint"
     },
     "config": {
@@ -63,11 +82,8 @@
     "extra": {
         "laravel": {
             "providers": [
-                "VendorName\\Skeleton\\SkeletonServiceProvider"
-            ],
-            "aliases": {
-                "Skeleton": "VendorName\\Skeleton\\Facades\\Skeleton"
-            }
+                "Selli\\Commerce\\CommerceServiceProvider"
+            ]
         }
     },
     "minimum-stability": "dev",

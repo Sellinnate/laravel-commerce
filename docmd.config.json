@@ -1,0 +1,91 @@
+{
+  "title": "Laravel Commerce",
+  "url": "https://laravel-commerce.selli.io",
+  "src": "docs",
+  "out": "site",
+  "engine": "js",
+  "layout": {
+    "spa": true,
+    "header": {
+      "enabled": true
+    },
+    "sidebar": {
+      "collapsible": true,
+      "defaultCollapsed": false
+    },
+    "optionsMenu": {
+      "position": "sidebar-top",
+      "components": {
+        "search": true,
+        "themeSwitch": true
+      }
+    },
+    "footer": {
+      "style": "minimal",
+      "content": "© 2026 Sellinnate S.r.l. — Laravel Commerce, the headless commerce engine for Laravel (MIT).",
+      "branding": true
+    }
+  },
+  "theme": {
+    "name": "default",
+    "appearance": "dark",
+    "codeHighlight": true
+  },
+  "minify": true,
+  "autoTitleFromH1": true,
+  "copyCode": true,
+  "pageNavigation": true,
+  "navigation": [
+    { "title": "Introduction", "path": "/", "icon": "home" },
+    {
+      "title": "Getting Started",
+      "icon": "rocket",
+      "collapsible": false,
+      "children": [
+        { "title": "What is Laravel Commerce?", "path": "/getting-started/what-is-laravel-commerce", "icon": "lightbulb" },
+        { "title": "Installation", "path": "/getting-started/installation", "icon": "download" },
+        { "title": "Quick Start", "path": "/getting-started/quick-start", "icon": "zap" }
+      ]
+    },
+    {
+      "title": "Concepts",
+      "icon": "book-open",
+      "children": [
+        { "title": "Architecture", "path": "/concepts/architecture", "icon": "layout" },
+        { "title": "The Purchasable contract", "path": "/concepts/purchasable", "icon": "package" },
+        { "title": "Money & rounding", "path": "/concepts/money", "icon": "coins" },
+        { "title": "The cart", "path": "/concepts/cart", "icon": "shopping-cart" },
+        { "title": "The order & state machine", "path": "/concepts/order", "icon": "git-branch" },
+        { "title": "The calculation pipeline", "path": "/concepts/pipeline", "icon": "sliders" },
+        { "title": "Multi-tenancy", "path": "/concepts/multi-tenancy", "icon": "users" },
+        { "title": "Audit trail & events", "path": "/concepts/audit-and-events", "icon": "history" },
+        { "title": "ACL & policies", "path": "/concepts/acl", "icon": "shield" }
+      ]
+    },
+    {
+      "title": "Guides",
+      "icon": "compass",
+      "children": [
+        { "title": "Sell a service or digital good", "path": "/guides/sell-a-service", "icon": "box" },
+        { "title": "Add a custom calculator", "path": "/guides/custom-calculator", "icon": "plus-circle" },
+        { "title": "Place & transition an order", "path": "/guides/place-and-transition", "icon": "check-circle" }
+      ]
+    },
+    {
+      "title": "Reference",
+      "icon": "book",
+      "children": [
+        { "title": "Configuration", "path": "/reference/configuration", "icon": "cog" },
+        { "title": "Contracts", "path": "/reference/contracts", "icon": "file-text" },
+        { "title": "Events", "path": "/reference/events", "icon": "radio" },
+        { "title": "Database schema", "path": "/reference/database-schema", "icon": "database" }
+      ]
+    },
+    { "title": "GitHub", "path": "https://github.com/sellinnate/laravel-commerce", "icon": "github", "external": true }
+  ],
+  "plugins": {
+    "seo": {
+      "defaultDescription": "A headless, catalog-agnostic commerce engine for Laravel: cart, order lifecycle, deterministic pricing pipeline, tax and inventory — multi-tenant, multi-currency, audited and ACL-protected."
+    }
+  }
+}
