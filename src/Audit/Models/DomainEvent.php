@@ -7,6 +7,8 @@ namespace Selli\Commerce\Audit\Models;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
+use Selli\Commerce\Concerns\AppendOnly;
+use Selli\Commerce\Concerns\BelongsToTenant;
 use Selli\Commerce\Concerns\HasPrefixedTable;
 
 /**
@@ -25,6 +27,8 @@ use Selli\Commerce\Concerns\HasPrefixedTable;
  */
 class DomainEvent extends Model
 {
+    use AppendOnly;
+    use BelongsToTenant;
     use HasPrefixedTable;
     use HasUlids;
 

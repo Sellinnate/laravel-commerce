@@ -179,6 +179,7 @@ final class CartManager
      */
     public function merge(Cart $source, Cart $target, ?MergeStrategy $strategy = null): Cart
     {
+        $this->assertMutable($source);
         $this->assertMutable($target);
 
         if ($source->currency !== $target->currency) {
