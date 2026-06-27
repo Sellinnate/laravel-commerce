@@ -33,38 +33,22 @@ final class PromotionCalculator implements Calculator
             return;
         }
 
-        /** @var list<array{promotion: Promotion, discount: Money}> $matched */
+        /** @var list<Promotion> $matched */
         $matched = [];
 
         foreach ($this->promotions() as $promotion) {
-            if (! $this->evaluator->matches($promotion, $calculation)) {
-                continue;
+            if ($this->evaluator->matches($promotion, $calculation)) {
+                $matched[] = $promotion;
             }
-
-            $matched[] = [
-                'promotion' => $promotion,
-                'discount' => $this->rounding->round($this->evaluator->discount($promotion, $calculation, $calculation->itemsSubtotal())),
-            ];
         }
 
         if ($matched === []) {
             return;
         }
 
-        usort($matched, function (array $a, array $b): int {
-            $byPriority = $b['promotion']->priority <=> $a['promotion']->priority;
-
-            if ($byPriority !== 0) {
-                return $byPriority;
-            }
-
-            return $b['discount']->getMinorAmount()->toInt() <=> $a['discount']->getMinorAmount()->toInt();
-        });
-
         $base = $calculation->itemsSubtotal();
 
-        foreach ($this->resolveStacking($matched) as $entry) {
-            $promotion = $entry['promotion'];
+        foreach ($this->chooseBestSet($matched, $calculation) as $promotion) {
             $discount = $this->rounding->round($this->evaluator->discount($promotion, $calculation, $base));
 
             if (! $discount->isZero()) {
@@ -107,34 +91,32 @@ final class PromotionCalculator implements Calculator
     }
 
     /**
-     * Resolve the stacking constraints into the best application set for the
-     * customer: cumulative promotions may stack together; an exclusive or
-     * best-of promotion only applies alone. We build every valid candidate set
-     * (the cumulative stack, and each non-cumulative promotion on its own) and
-     * apply whichever yields the largest total discount — so a better
-     * exclusive/best-of offer is never silently dropped in favour of a smaller
-     * cumulative stack, while the declared constraints are still respected.
+     * Pick the valid application set with the largest *actual* total discount:
+     * the cumulative stack (applied sequentially on a shrinking base, exactly as
+     * apply() does), and each exclusive/best-of promotion on its own. Declared
+     * constraints (exclusive/best-of never stack) are respected; a better
+     * exclusive/best-of offer is never dropped in favour of a smaller stack.
      *
-     * @param  list<array{promotion: Promotion, discount: Money}>  $matched
-     * @return list<array{promotion: Promotion, discount: Money}>
+     * @param  list<Promotion>  $matched
+     * @return list<Promotion>
      */
-    private function resolveStacking(array $matched): array
+    private function chooseBestSet(array $matched, Calculation $calculation): array
     {
+        /** @var list<list<Promotion>> $candidates */
+        $candidates = [];
+
         $cumulative = array_values(array_filter(
             $matched,
-            static fn (array $entry): bool => $entry['promotion']->stacking === StackingPolicy::Cumulative,
+            static fn (Promotion $promotion): bool => $promotion->stacking === StackingPolicy::Cumulative,
         ));
-
-        /** @var list<list<array{promotion: Promotion, discount: Money}>> $candidates */
-        $candidates = [];
 
         if ($cumulative !== []) {
             $candidates[] = $cumulative;
         }
 
-        foreach ($matched as $entry) {
-            if ($entry['promotion']->stacking !== StackingPolicy::Cumulative) {
-                $candidates[] = [$entry];
+        foreach ($matched as $promotion) {
+            if ($promotion->stacking !== StackingPolicy::Cumulative) {
+                $candidates[] = [$promotion];
             }
         }
 
@@ -142,11 +124,7 @@ final class PromotionCalculator implements Calculator
         $bestTotal = -1;
 
         foreach ($candidates as $candidate) {
-            $total = 0;
-
-            foreach ($candidate as $entry) {
-                $total += $entry['discount']->getMinorAmount()->toInt();
-            }
+            $total = $this->totalDiscount($candidate, $calculation);
 
             if ($total > $bestTotal) {
                 $bestTotal = $total;
@@ -155,5 +133,25 @@ final class PromotionCalculator implements Calculator
         }
 
         return $best;
+    }
+
+    /**
+     * The real total discount (in minor units) a set yields when applied
+     * sequentially on a shrinking base — identical to how apply() applies it.
+     *
+     * @param  list<Promotion>  $set
+     */
+    private function totalDiscount(array $set, Calculation $calculation): int
+    {
+        $base = $calculation->itemsSubtotal();
+        $total = 0;
+
+        foreach ($set as $promotion) {
+            $discount = $this->rounding->round($this->evaluator->discount($promotion, $calculation, $base));
+            $total += $discount->getMinorAmount()->toInt();
+            $base = $base->minus($discount);
+        }
+
+        return $total;
     }
 }
