@@ -80,6 +80,11 @@ final class RecordPricingUsage
             return;
         }
 
+        // Usage limits are enforced at application time (CartManager::applyCoupon
+        // → CouponValidator). Here we record the *actual* consumption append-only
+        // and keep usage_count as the source of truth — so a discount that was
+        // honoured on the order is always reflected, never silently dropped.
+        // The row lock serialises increments so none are lost under concurrency.
         DB::transaction(function () use ($order, $couponId, $amount, $currency): void {
             $coupon = $this->scopedToOrderTenant(Coupon::withoutTenantScope(), $order)
                 ->whereKey($couponId)
@@ -90,9 +95,12 @@ final class RecordPricingUsage
                 return;
             }
 
-            // Re-check the global limit under the lock so two concurrent
-            // placements cannot both push usage past the cap.
-            if ($coupon->hasReachedGlobalLimit()) {
+            // Idempotent per order: a replayed event must not double-count.
+            $alreadyRecorded = $coupon->redemptions()
+                ->where('order_id', $order->id)
+                ->exists();
+
+            if ($alreadyRecorded) {
                 return;
             }
 

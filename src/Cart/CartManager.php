@@ -105,7 +105,7 @@ final class CartManager
             throw ProductNotAvailableException::for($purchasable->getName(), $quantity);
         }
 
-        $unitPrice = $this->prices->resolve($purchasable, $cart->currency, $this->context($cart));
+        $unitPrice = $this->prices->resolve($purchasable, $cart->currency, $this->context($cart, $quantity));
         $resolvedCurrency = $unitPrice->getCurrency()->getCurrencyCode();
 
         if ($resolvedCurrency !== $cart->currency) {
@@ -326,7 +326,7 @@ final class CartManager
                     continue;
                 }
 
-                $item->unit_price = $this->prices->resolve($purchasable, $cart->currency, $this->context($cart));
+                $item->unit_price = $this->prices->resolve($purchasable, $cart->currency, $this->context($cart, $item->quantity));
                 $item->save();
             }
 
@@ -516,15 +516,27 @@ final class CartManager
     }
 
     /**
+     * Build the price-resolution context. Quantity drives price-book quantity
+     * tiers; the segment (from cart metadata) drives segment-specific books.
+     *
      * @return array<string, mixed>
      */
-    private function context(Cart $cart): array
+    private function context(Cart $cart, int $quantity = 1): array
     {
-        return [
+        $context = [
             'tenant_id' => $cart->tenant_id,
             'customer' => ['type' => $cart->owner_type, 'id' => $cart->owner_id],
             'cart' => $cart,
+            'quantity' => $quantity,
         ];
+
+        $segment = ($cart->metadata ?? [])['segment'] ?? null;
+
+        if (is_string($segment) && $segment !== '') {
+            $context['segment'] = $segment;
+        }
+
+        return $context;
     }
 
     private function assertMutable(Cart $cart): void

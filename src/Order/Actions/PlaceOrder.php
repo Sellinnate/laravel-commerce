@@ -77,6 +77,10 @@ final class PlaceOrder
                 throw CartNotMutableException::expired($locked->id);
             }
 
+            // Take metadata (applied coupons / gift cards) from the locked row,
+            // not the possibly-stale in-memory cart, so the totals reflect what
+            // is actually persisted.
+            $cart->metadata = $locked->metadata;
             $cart->load('items');
 
             // Re-check emptiness under the lock: a concurrent clear() could
