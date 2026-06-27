@@ -114,7 +114,64 @@ Immutable snapshots — see [Order](/concepts/order).
 | `created_at` | timestamp | No `updated_at`. |
 
 ::: callout warning "Append-only means append-only"
-`order_state_transitions` and `domain_events` are written once and never mutated. Treat them as an immutable ledger — that property is what makes the audit trail trustworthy.
+`order_state_transitions`, `domain_events` and `stock_movements` are written once and never mutated. Treat them as an immutable ledger — that property is what makes the audit trail trustworthy.
 :::
 
-See also: [Money](/concepts/money) · [Multi-tenancy](/concepts/multi-tenancy) · [Configuration](/reference/configuration).
+## Inventory tables
+
+Created by the [Inventory module](/modules/inventory/overview).
+
+### warehouses
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | CHAR(26) | ULID PK. |
+| `tenant_id` | string, nullable, indexed | |
+| `code` / `name` | string | Unique `(tenant_id, code)`. |
+| `priority` | int | Lower wins during allocation. |
+| `active` | bool | |
+
+### stock_items
+
+The lock-friendly **projection** of the ledger: ATP is `on_hand − reserved`.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | CHAR(26) | ULID PK. |
+| `tenant_id` | string, nullable, indexed | |
+| `warehouse_id` | CHAR(26) | |
+| `purchasable_type` / `purchasable_id` | string | Unique per `(tenant, warehouse, purchasable)`. |
+| `on_hand` / `reserved` | int | Signed (a backorder may drive `on_hand` < 0). |
+| `allow_backorder` | bool, nullable | Per-item override of the global policy. |
+| `version` | unsigned big int | Optimistic-lock counter. |
+
+### stock_movements
+
+**Append-only** — the stock ledger `on_hand` reconciles to.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | CHAR(26) | ULID PK. |
+| `tenant_id` | string, nullable, indexed | |
+| `warehouse_id` | CHAR(26) | |
+| `purchasable_type` / `purchasable_id` | string, indexed | |
+| `type` | string | receipt / adjustment / reservation / release / shipment. |
+| `quantity` | int | Signed. |
+| `reason` | string, nullable | |
+| `reference_type` / `reference_id` | string, nullable, indexed | Cart or order. |
+| `created_at` | timestamp | No `updated_at`. |
+
+### stock_reservations
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | CHAR(26) | ULID PK. |
+| `tenant_id` | string, nullable, indexed | |
+| `warehouse_id` | CHAR(26) | |
+| `purchasable_type` / `purchasable_id` | string | |
+| `quantity` | int | |
+| `status` | string | active / released / consumed. |
+| `reference_type` / `reference_id` | string, nullable, indexed | Cart or order. |
+| `expires_at` | timestamp, nullable, indexed | TTL; null never expires. |
+
+See also: [Money](/concepts/money) · [Multi-tenancy](/concepts/multi-tenancy) · [Configuration](/reference/configuration) · [Inventory](/modules/inventory/overview).

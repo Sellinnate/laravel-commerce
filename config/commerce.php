@@ -124,6 +124,33 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Inventory module
+    |--------------------------------------------------------------------------
+    | Stock is tracked per purchasable × warehouse. Available-to-promise is
+    | on_hand − active reservations; that is the number isAvailable() consults.
+    */
+    'inventory' => [
+        // Code of the warehouse used when a single-warehouse app does not pick
+        // one explicitly. Auto-created on first use.
+        'default_warehouse' => env('COMMERCE_INVENTORY_WAREHOUSE', 'default'),
+
+        // When stock is reserved: "place_order" (only at checkout, the default
+        // and cheapest) or "add_to_cart" (held with a TTL the moment a line is
+        // added, released when removed or when the TTL lapses).
+        'reserve_on' => env('COMMERCE_INVENTORY_RESERVE_ON', 'place_order'),
+
+        // Minutes a cart reservation is held before it is considered expired and
+        // its stock is promised to someone else again. Null disables expiry.
+        'reservation_ttl' => env('COMMERCE_INVENTORY_RESERVATION_TTL', 60),
+
+        // Whether a purchase may exceed available stock. "deny" throws
+        // InsufficientStockException; "allow" lets the line through and the
+        // order is annotated as a backorder (emitting BackorderCreated).
+        'backorder' => env('COMMERCE_INVENTORY_BACKORDER', 'deny'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Rounding
     |--------------------------------------------------------------------------
     | A single rounding mode governs the whole engine. Per-currency scale is

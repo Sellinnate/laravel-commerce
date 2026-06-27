@@ -36,6 +36,19 @@ Every domain occurrence is a standard Laravel event under `Selli\Commerce\Events
 Each state change emits the generic `OrderStateTransitioned` **and** a specific event (e.g. `OrderConfirmed`). Listen to the generic one for cross-cutting concerns like logging; listen to the specific ones for targeted side effects.
 :::
 
+## Inventory events
+
+Emitted by the [Inventory module](/modules/inventory/overview) under `Selli\Commerce\Events\Inventory\*` when it is enabled. Each carries the purchasable, the quantity, the warehouse and the reference (cart/order) that caused it.
+
+| Event | When emitted | Payload highlights |
+| --- | --- | --- |
+| `StockReserved` | Stock is held for a cart (add-to-cart timing) | purchasable, quantity, warehouse, cart ref |
+| `StockReleased` | A hold is released (removed / TTL elapsed) | purchasable, quantity, warehouse, ref |
+| `StockDepleted` | A movement drives `on_hand` to zero or below | purchasable, resulting on_hand, warehouse |
+| `BackorderCreated` | An order ships beyond stock under an allowing policy | purchasable, backordered quantity, order ref |
+
+These are the hooks for automatic reordering, low-stock alerts and ERP synchronisation — the core emits them and imposes nothing.
+
 ## Listening
 
 They are ordinary Laravel events — register them however you prefer:

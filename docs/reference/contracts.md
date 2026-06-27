@@ -21,6 +21,8 @@ The engine is a set of interfaces with sensible defaults. Each contract lives in
 | `TenantContext` | `currentTenantId(): ?string`, `hasTenant(): bool` | `NullTenantContext`. |
 | `ExchangeRateProvider` | `rate(string $from, string $to): BigNumber` | Bind your own FX source. |
 | `Calculator` | `apply(Calculation): void`, `identifier(): string` | Pipeline calculators (`commerce.pipeline`). |
+| `StockResolver` | `availableToPromise(string $type, string $id, ?string $tenantId): ?int` | `InventoryManager` (or `NullInventory` when off). |
+| `StockKeeper` | `fulfillOrder(...)`, `hold(...)`, `release(...)` | `InventoryManager` (or `NullInventory` when off). |
 
 ::: callout info "Resolvers, not magic"
 `PurchasableResolver` turns a stored `(type, id)` pair back into a live `Purchasable` — the seam to source from a PIM or external API. `PriceResolver` centralises *how* a price is derived, letting you layer rules without touching models.

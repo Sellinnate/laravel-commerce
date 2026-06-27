@@ -21,13 +21,13 @@ All behaviour is driven by `config/commerce.php`. Publish it, then tune the keys
 
 ## Modules
 
-Feature flags for the [planned modules](/concepts/pipeline). They are on the roadmap and ship in a later release; the keys exist so you can enable them when available.
+Feature flags for the optional modules. Each is independent: a disabled module registers no calculators and leaves no dead code path in the [pipeline](/concepts/pipeline).
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `modules.pricing` | `false` | Planned pricing module. |
-| `modules.tax` | `false` | Planned tax module. |
-| `modules.inventory` | `false` | Planned inventory module. |
+| `modules.pricing` | `true` | [Price books, coupons, promotions, gift cards](/modules/pricing/overview). |
+| `modules.tax` | `true` | [Per-line tax with jurisdictions and relief](/modules/tax/overview). |
+| `modules.inventory` | `true` | [Stock, reservations and oversell prevention](/modules/inventory/overview). |
 
 ## Cart
 
@@ -46,6 +46,26 @@ Feature flags for the [planned modules](/concepts/pipeline). They are on the roa
     'ttl'            => 60 * 24 * 7, // minutes
     'merge_strategy' => \Selli\Commerce\Enums\MergeStrategy::KeepHighestQuantity,
     'idempotent_add' => true,
+],
+```
+
+## Inventory
+
+Governs the [Inventory module](/modules/inventory/overview) (when `modules.inventory` is on).
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `inventory.default_warehouse` | `'default'` | Code of the warehouse used by automatic operations; auto-created on first use. |
+| `inventory.reserve_on` | `'place_order'` | When stock is held: `place_order` or `add_to_cart`. |
+| `inventory.reservation_ttl` | `60` | Minutes a cart hold lives before it lapses (`null` = never). |
+| `inventory.backorder` | `'deny'` | `deny` throws `InsufficientStockException`; `allow` permits selling below zero and annotates the order. |
+
+```php
+'inventory' => [
+    'default_warehouse' => 'default',
+    'reserve_on'        => 'place_order',
+    'reservation_ttl'   => 60,
+    'backorder'         => 'deny',
 ],
 ```
 
