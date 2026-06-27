@@ -118,6 +118,38 @@ it('freezes per-line tax onto the order at placement', function (): void {
         ->and($order->lines->first()->tax_total->getMinorAmount()->toInt())->toBe(2200);
 });
 
+it('carries the tax context from a guest cart on merge', function (): void {
+    config()->set('commerce.tax.prices_include_tax', false);
+    TaxRate::factory()->create(['category' => 'standard', 'country' => 'IT', 'rate' => 2200, 'name' => 'VAT 22%']);
+    $product = Product::create(['name' => 'Widget', 'price_cents' => 10000]);
+
+    $guest = $this->carts->create('EUR');
+    $this->carts->add($guest, $product, 1);
+    $this->carts->setTaxContext($guest, ['country' => 'IT']);
+
+    $user = $this->carts->create('EUR');
+
+    $this->carts->merge($guest, $user);
+
+    expect($this->carts->taxContext($user)['country'] ?? null)->toBe('IT')
+        ->and($this->carts->recalculate($user)->taxTotal()->getMinorAmount()->toInt())->toBe(2200);
+});
+
+it('keeps the tax category on a line across idempotent adds', function (): void {
+    config()->set('commerce.tax.prices_include_tax', false);
+    TaxRate::factory()->create(['category' => 'reduced', 'country' => 'IT', 'rate' => 1000, 'name' => 'VAT 10%']);
+
+    $product = TaxableProduct::create(['name' => 'Book', 'price_cents' => 5000, 'tax_category' => 'reduced']);
+    $cart = $this->carts->create('EUR');
+    $this->carts->add($cart, $product, 1);
+    $item = $this->carts->add($cart, $product, 1); // idempotent bump to qty 2
+    $this->carts->setTaxContext($cart, ['country' => 'IT']);
+
+    // 2 × 50.00 = 100.00 net at the reduced 10% → 10.00 tax.
+    expect($item->fresh()->metadata['tax_category'] ?? null)->toBe('reduced')
+        ->and($this->carts->calculate($cart)->taxTotal()->getMinorAmount()->toInt())->toBe(1000);
+});
+
 it('does not tax when the tax module is disabled', function (): void {
     config()->set('commerce.modules.tax', false);
     $carts = app(CartManager::class);

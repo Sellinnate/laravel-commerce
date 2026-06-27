@@ -140,6 +140,13 @@ final class CartManager
                 // quantity-tier price book reflects the merged line, not just
                 // this increment.
                 $existing->unit_price = $this->prices->resolve($purchasable, $cart->currency, $this->context($cart, $newQuantity));
+
+                // Keep the line's frozen tax category in sync with the
+                // purchasable on every add, not only on first creation.
+                if (isset($metadata['tax_category'])) {
+                    $existing->metadata = array_merge($existing->metadata ?? [], ['tax_category' => $metadata['tax_category']]);
+                }
+
                 $existing->save();
 
                 $cart->load('items');
@@ -313,9 +320,11 @@ final class CartManager
                 )));
             }
 
-            // Carry the pricing segment so segment-specific prices survive the
-            // login merge (the target keeps its own segment if it has one).
+            // Carry the pricing segment and tax context so segment-specific
+            // prices and the tax jurisdiction survive the login merge (the
+            // target keeps its own value if it already has one).
             $this->carryMetadataValue($source, $target, 'segment');
+            $this->carryMetadataValue($source, $target, 'tax');
 
             $source->status = CartStatus::Merged;
             $source->save();
