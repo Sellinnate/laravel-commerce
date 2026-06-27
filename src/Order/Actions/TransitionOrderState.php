@@ -8,6 +8,7 @@ use Illuminate\Contracts\Auth\Access\Authorizable;
 use Illuminate\Contracts\Auth\Access\Gate;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
 use Selli\Commerce\Events\Order\OrderCancelled;
 use Selli\Commerce\Events\Order\OrderCompleted;
 use Selli\Commerce\Events\Order\OrderConfirmed;
@@ -54,20 +55,25 @@ final class TransitionOrderState
             $actorId = (string) $key;
         }
 
-        $order->state->transitionTo($toState);
-        $order->refresh();
+        // The state change and its append-only audit row are atomic: if the
+        // log write fails, the transition itself rolls back, so the order can
+        // never end up in a new state without a matching trail entry.
+        DB::transaction(function () use ($order, $toState, $from, $by, $actorId, $reason): void {
+            $order->state->transitionTo($toState);
+            $order->refresh();
+
+            OrderStateTransition::query()->create([
+                'order_id' => $order->id,
+                'tenant_id' => $order->tenant_id,
+                'from_state' => $from,
+                'to_state' => $order->state::$name,
+                'actor_type' => $by?->getMorphClass(),
+                'actor_id' => $actorId,
+                'reason' => $reason,
+            ]);
+        });
 
         $to = $order->state::$name;
-
-        OrderStateTransition::query()->create([
-            'order_id' => $order->id,
-            'tenant_id' => $order->tenant_id,
-            'from_state' => $from,
-            'to_state' => $to,
-            'actor_type' => $by?->getMorphClass(),
-            'actor_id' => $actorId,
-            'reason' => $reason,
-        ]);
 
         $this->events->dispatch(new OrderStateTransitioned(
             $order,

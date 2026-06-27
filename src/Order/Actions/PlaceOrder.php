@@ -18,6 +18,7 @@ use Selli\Commerce\Enums\CartStatus;
 use Selli\Commerce\Events\Order\OrderPlaced;
 use Selli\Commerce\Exceptions\CartNotMutableException;
 use Selli\Commerce\Exceptions\EmptyCartException;
+use Selli\Commerce\Exceptions\ProductNotAvailableException;
 use Selli\Commerce\Order\Models\Order;
 use Selli\Commerce\Order\Models\OrderLine;
 use Selli\Commerce\Order\Models\OrderStateTransition;
@@ -54,9 +55,28 @@ final class PlaceOrder
         }
 
         return DB::transaction(function () use ($cart, $attributes): Order {
+            // Lock the cart row and re-check its status inside the transaction
+            // so two concurrent checkouts of the same cart cannot both convert
+            // it (the second blocks, then sees "converted" and aborts).
+            $locked = Cart::withoutTenantScope()
+                ->whereKey($cart->id)
+                ->lockForUpdate()
+                ->first();
+
+            if ($locked === null || $locked->status !== CartStatus::Active) {
+                throw CartNotMutableException::inStatus($locked->status ?? $cart->status);
+            }
+
+            $cart->load('items');
+
+            // Re-validate availability at conversion time: stock may have
+            // dropped since the items were added.
+            $this->assertLinesAvailable($cart);
+
             $calculation = $this->carts->calculate($cart);
 
             $order = new Order(array_merge([
+                'tenant_id' => $cart->tenant_id,
                 'customer_type' => $cart->owner_type,
                 'customer_id' => $cart->owner_id,
                 'currency' => $cart->currency,
@@ -84,14 +104,26 @@ final class PlaceOrder
                 'reason' => 'Order placed',
             ]);
 
+            $locked->status = CartStatus::Converted;
+            $locked->save();
             $cart->status = CartStatus::Converted;
-            $cart->save();
 
             $order->load('lines');
             $this->events->dispatch(new OrderPlaced($order));
 
             return $order;
         });
+    }
+
+    private function assertLinesAvailable(Cart $cart): void
+    {
+        foreach ($cart->items as $item) {
+            $purchasable = $this->purchasables->resolve($item->purchasable_type, $item->purchasable_id);
+
+            if ($purchasable !== null && ! $purchasable->isAvailable($item->quantity)) {
+                throw ProductNotAvailableException::for($item->name, $item->quantity);
+            }
+        }
     }
 
     private function persistLine(Order $order, CalculationLine $line): void

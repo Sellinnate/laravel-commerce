@@ -69,6 +69,12 @@ final class CartManager
 
     /**
      * Find the active cart for an owner or create a fresh one.
+     *
+     * Under a race, two parallel requests may each create an active cart for
+     * the same owner. This is intentionally tolerated rather than guarded by a
+     * filtered unique index (which is not portable across SQLite/MySQL/
+     * Postgres): duplicate active carts are harmless and reconciled by
+     * {@see merge()} on the next login/checkout.
      */
     public function forOwner(string $ownerType, string $ownerId, ?string $currency = null): Cart
     {
@@ -205,7 +211,7 @@ final class CartManager
                 if ($match === null) {
                     $this->assertAvailableForMerge($sourceItem, $sourceItem->quantity);
 
-                    $target->items()->create([
+                    $created = $target->items()->create([
                         'purchasable_type' => $sourceItem->purchasable_type,
                         'purchasable_id' => $sourceItem->purchasable_id,
                         'name' => $sourceItem->name,
@@ -214,6 +220,11 @@ final class CartManager
                         'options' => $sourceItem->options ?? [],
                         'metadata' => $sourceItem->metadata ?? [],
                     ]);
+
+                    // Keep the in-memory collection in sync so a later source
+                    // line with the same purchasable matches and combines
+                    // instead of creating a duplicate.
+                    $target->items->push($created);
 
                     continue;
                 }

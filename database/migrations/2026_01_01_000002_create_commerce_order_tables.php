@@ -21,7 +21,10 @@ return new class extends Migration
         Schema::create($prefix.'orders', function (Blueprint $table): void {
             $table->ulid('id')->primary();
             $table->string('tenant_id')->nullable()->index();
-            $table->string('number')->unique();
+            // Order numbers are a per-tenant sequence, so uniqueness is scoped
+            // to the tenant rather than global.
+            $table->string('number');
+            $table->unique(['tenant_id', 'number']);
             $table->nullableMorphs('customer');
             $table->char('currency', 3);
             $table->string('state')->index();
