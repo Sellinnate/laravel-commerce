@@ -51,29 +51,48 @@ final class PromotionCalculator implements Calculator
         foreach ($this->chooseBestSet($matched, $calculation) as $promotion) {
             $discount = $this->rounding->round($this->evaluator->discount($promotion, $calculation, $base));
 
-            if (! $discount->isZero()) {
-                $calculation->addAdjustment(new Adjustment(
-                    AdjustmentType::Promotion,
-                    $promotion->name,
-                    $discount->multipliedBy(-1),
-                    'promotion',
-                    true,
-                    ['promotion_id' => $promotion->id, 'name' => $promotion->name],
-                ));
-
-                $base = $base->minus($discount);
+            if ($discount->isZero()) {
+                continue;
             }
 
-            if ($this->evaluator->grantsFreeShipping($promotion)) {
-                $calculation->addAdjustment(new Adjustment(
-                    AdjustmentType::Shipping,
-                    "{$promotion->name} (free shipping)",
-                    Money::zero($calculation->currency),
-                    'promotion',
-                    false,
-                    ['promotion_id' => $promotion->id, 'free_shipping' => true],
-                ));
+            $calculation->addAdjustment(new Adjustment(
+                AdjustmentType::Promotion,
+                $promotion->name,
+                $discount->multipliedBy(-1),
+                'promotion',
+                true,
+                ['promotion_id' => $promotion->id, 'name' => $promotion->name],
+            ));
+
+            $base = $base->minus($discount);
+        }
+
+        $this->applyFreeShipping($matched, $calculation);
+    }
+
+    /**
+     * Free shipping is a non-monetary perk and shipping is a v1 placeholder, so
+     * it is granted by any matching promotion that offers it, independently of
+     * the monetary-discount stacking — a free-shipping promotion is therefore
+     * never dropped just because it scores no subtotal discount.
+     *
+     * @param  list<Promotion>  $matched
+     */
+    private function applyFreeShipping(array $matched, Calculation $calculation): void
+    {
+        foreach ($matched as $promotion) {
+            if (! $this->evaluator->grantsFreeShipping($promotion)) {
+                continue;
             }
+
+            $calculation->addAdjustment(new Adjustment(
+                AdjustmentType::Shipping,
+                "{$promotion->name} (free shipping)",
+                Money::zero($calculation->currency),
+                'promotion',
+                false,
+                ['promotion_id' => $promotion->id, 'free_shipping' => true],
+            ));
         }
     }
 

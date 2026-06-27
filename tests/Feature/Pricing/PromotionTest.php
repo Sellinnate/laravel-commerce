@@ -110,6 +110,20 @@ it('defaults a promotion stacking policy from config', function (): void {
     expect($promotion->fresh()->stacking)->toBe(StackingPolicy::BestOf);
 });
 
+it('still grants free shipping from a non-cumulative promotion alongside a discount', function (): void {
+    Promotion::factory()->create(['name' => '5% cumulative', 'stacking' => StackingPolicy::Cumulative, 'actions' => [['type' => 'percentage_off', 'percent' => 5]]]);
+    Promotion::factory()->create(['name' => 'Free shipping', 'stacking' => StackingPolicy::Exclusive, 'actions' => [['type' => 'free_shipping']]]);
+
+    [$cart] = cartSubtotal($this->carts, 1000, 1);
+    $calc = $this->carts->calculate($cart);
+
+    $shipping = array_filter($calc->adjustments(), fn ($a) => $a->type === AdjustmentType::Shipping);
+
+    // The 5% discount applies and the free-shipping perk is not dropped.
+    expect($shipping)->not->toBeEmpty()
+        ->and($calc->grandTotal()->getMinorAmount()->toInt())->toBe(950);
+});
+
 it('records a PromotionApplied event on placement', function (): void {
     Promotion::factory()->create(['name' => 'P', 'actions' => [['type' => 'percentage_off', 'percent' => 10]]]);
     [$cart] = cartSubtotal($this->carts, 1000, 1);
