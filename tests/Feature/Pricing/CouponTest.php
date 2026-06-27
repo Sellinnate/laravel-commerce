@@ -62,6 +62,14 @@ it('rejects an unknown coupon', function (): void {
     $this->carts->applyCoupon($cart, 'NOPE');
 })->throws(CouponNotFoundException::class);
 
+it('does not honour another tenant coupon on a null-tenant cart', function (): void {
+    // A coupon that belongs to another tenant must not apply to a null-tenant cart.
+    Coupon::factory()->create(['tenant_id' => 'other-tenant', 'code' => 'OTHER', 'type' => CouponType::Percentage, 'value' => 50]);
+    [$cart] = cartWith($this->carts, 1000);
+
+    $this->carts->applyCoupon($cart, 'OTHER');
+})->throws(CouponNotFoundException::class);
+
 it('rejects an expired coupon', function (): void {
     Coupon::factory()->create(['code' => 'OLD', 'expires_at' => now()->subDay()]);
     [$cart] = cartWith($this->carts, 1000);

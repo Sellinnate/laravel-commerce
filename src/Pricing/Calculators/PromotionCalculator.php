@@ -36,7 +36,9 @@ final class PromotionCalculator implements Calculator
         /** @var list<Promotion> $matched */
         $matched = [];
 
-        foreach ($this->promotions() as $promotion) {
+        $tenantId = is_string($calculation->context['tenant_id'] ?? null) ? $calculation->context['tenant_id'] : null;
+
+        foreach ($this->promotions($tenantId) as $promotion) {
             if ($this->evaluator->matches($promotion, $calculation)) {
                 $matched[] = $promotion;
             }
@@ -102,11 +104,24 @@ final class PromotionCalculator implements Calculator
     }
 
     /**
+     * Active promotions for the cart's tenant. Scoped explicitly by the context
+     * tenant (not the ambient tenant context) so the right tenant's rules apply
+     * even during guest checkout or system placement.
+     *
      * @return Collection<int, Promotion>
      */
-    private function promotions()
+    private function promotions(?string $tenantId)
     {
-        return Promotion::query()->valid(now())->orderByDesc('priority')->get();
+        return Promotion::withoutTenantScope()
+            ->valid(now())
+            ->when(
+                $tenantId === null,
+                fn ($query) => $query->whereNull('tenant_id'),
+                fn ($query) => $query->where('tenant_id', $tenantId),
+            )
+            ->orderByDesc('priority')
+            ->orderBy('id')
+            ->get();
     }
 
     /**

@@ -12,7 +12,8 @@ final class DatabaseGiftCardValidator implements GiftCardValidator
 {
     public function validate(string $code, array $context = []): void
     {
-        $giftCard = $this->find($code) ?? throw GiftCardException::notFound($code);
+        $tenantId = is_string($context['tenant_id'] ?? null) ? $context['tenant_id'] : null;
+        $giftCard = $this->find($code, $tenantId) ?? throw GiftCardException::notFound($code);
 
         if (! $giftCard->isRedeemable(now())) {
             throw GiftCardException::notRedeemable($code);
@@ -25,8 +26,19 @@ final class DatabaseGiftCardValidator implements GiftCardValidator
         }
     }
 
-    public function find(string $code): ?GiftCard
+    /**
+     * Find a gift card by code scoped to the given tenant (the cart's tenant),
+     * independent of the ambient tenant context.
+     */
+    public function find(string $code, ?string $tenantId = null): ?GiftCard
     {
-        return GiftCard::query()->where('code', $code)->first();
+        return GiftCard::withoutTenantScope()
+            ->where('code', $code)
+            ->when(
+                $tenantId === null,
+                fn ($query) => $query->whereNull('tenant_id'),
+                fn ($query) => $query->where('tenant_id', $tenantId),
+            )
+            ->first();
     }
 }

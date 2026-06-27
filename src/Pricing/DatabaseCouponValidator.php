@@ -24,15 +24,26 @@ final class DatabaseCouponValidator implements CouponValidator
 {
     public function validate(string $code, array $context = []): void
     {
-        $this->assert($this->find($code) ?? throw CouponNotFoundException::for($code), $code, $context);
+        $tenantId = is_string($context['tenant_id'] ?? null) ? $context['tenant_id'] : null;
+
+        $this->assert($this->find($code, $tenantId) ?? throw CouponNotFoundException::for($code), $code, $context);
     }
 
     /**
-     * Find a coupon by code within the current tenant scope.
+     * Find a coupon by code scoped to the given tenant. Pricing must follow the
+     * cart's tenant, not the ambient tenant context (which may be null during
+     * guest checkout or system placement), so the scope is explicit here.
      */
-    public function find(string $code): ?Coupon
+    public function find(string $code, ?string $tenantId = null): ?Coupon
     {
-        return Coupon::query()->where('code', $code)->first();
+        return Coupon::withoutTenantScope()
+            ->where('code', $code)
+            ->when(
+                $tenantId === null,
+                fn ($query) => $query->whereNull('tenant_id'),
+                fn ($query) => $query->where('tenant_id', $tenantId),
+            )
+            ->first();
     }
 
     /**

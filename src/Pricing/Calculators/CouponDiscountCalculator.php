@@ -35,10 +35,12 @@ final class CouponDiscountCalculator implements Calculator
             return;
         }
 
+        $tenantId = is_string($calculation->context['tenant_id'] ?? null) ? $calculation->context['tenant_id'] : null;
+
         $context = [
             'currency' => $calculation->currency,
             'customer' => $calculation->context['customer'] ?? null,
-            'tenant_id' => $calculation->context['tenant_id'] ?? null,
+            'tenant_id' => $tenantId,
         ];
 
         // Minimum-spend is validated against the promotion-net subtotal (the
@@ -58,7 +60,14 @@ final class CouponDiscountCalculator implements Calculator
                 continue;
             }
 
-            $coupon = Coupon::query()->where('code', $code)->first();
+            $coupon = Coupon::withoutTenantScope()
+                ->where('code', $code)
+                ->when(
+                    $tenantId === null,
+                    fn ($query) => $query->whereNull('tenant_id'),
+                    fn ($query) => $query->where('tenant_id', $tenantId),
+                )
+                ->first();
 
             if (! $coupon instanceof Coupon) {
                 continue;

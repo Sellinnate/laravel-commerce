@@ -33,9 +33,11 @@ final class GiftCardCalculator implements Calculator
             return;
         }
 
+        $tenantId = is_string($calculation->context['tenant_id'] ?? null) ? $calculation->context['tenant_id'] : null;
+
         $context = [
             'currency' => $calculation->currency,
-            'tenant_id' => $calculation->context['tenant_id'] ?? null,
+            'tenant_id' => $tenantId,
         ];
 
         $remaining = $calculation->rawGrandTotal();
@@ -51,7 +53,14 @@ final class GiftCardCalculator implements Calculator
                 continue;
             }
 
-            $giftCard = GiftCard::query()->where('code', $code)->first();
+            $giftCard = GiftCard::withoutTenantScope()
+                ->where('code', $code)
+                ->when(
+                    $tenantId === null,
+                    fn ($query) => $query->whereNull('tenant_id'),
+                    fn ($query) => $query->where('tenant_id', $tenantId),
+                )
+                ->first();
 
             if (! $giftCard instanceof GiftCard || $giftCard->currency !== $calculation->currency) {
                 continue;
