@@ -95,6 +95,26 @@ it('applies a quantity tier when adding to a cart', function (): void {
     expect($carts->calculate($cart)->grandTotal()->getMinorAmount()->toInt())->toBe(7000);
 });
 
+it('re-prices to a quantity tier when idempotent adds cross the threshold', function (): void {
+    $product = Product::create(['name' => 'Widget', 'price_cents' => 1000]);
+    $book = priceBookWith($product->id, 1000, [], 1);
+    $book->prices()->create([
+        'purchasable_type' => 'product',
+        'purchasable_id' => $product->id,
+        'amount' => 700,
+        'currency' => 'EUR',
+        'min_quantity' => 10,
+    ]);
+
+    $carts = app(CartManager::class);
+    $cart = $carts->create('EUR');
+    $carts->add($cart, $product, 5);  // below tier → 1000 each
+    $carts->add($cart, $product, 5);  // combined 10 → tier 700 each
+
+    expect($cart->items->first()->quantity)->toBe(10)
+        ->and($carts->calculate($cart)->grandTotal()->getMinorAmount()->toInt())->toBe(7000);
+});
+
 it('uses a segment-specific price when the cart carries a segment', function (): void {
     $product = Product::create(['name' => 'Widget', 'price_cents' => 1000]);
     priceBookWith($product->id, 800);

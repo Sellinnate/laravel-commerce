@@ -124,7 +124,10 @@ final class CartManager
                 $this->assertCartQuantityAvailable($cart, $purchasable, $purchasable->getPurchasableType(), $purchasable->getPurchasableId(), $purchasable->getName(), $newQuantity, $existing->id);
 
                 $existing->quantity = $newQuantity;
-                $existing->unit_price = $unitPrice;
+                // Re-resolve the price against the combined quantity so a
+                // quantity-tier price book reflects the merged line, not just
+                // this increment.
+                $existing->unit_price = $this->prices->resolve($purchasable, $cart->currency, $this->context($cart, $newQuantity));
                 $existing->save();
 
                 $cart->load('items');

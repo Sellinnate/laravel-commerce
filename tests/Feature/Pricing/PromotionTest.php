@@ -76,6 +76,16 @@ it('applies only the best promotion under best-of', function (): void {
     expect($this->carts->calculate($cart)->grandTotal()->getMinorAmount()->toInt())->toBe(700);
 });
 
+it('prefers a larger exclusive offer over a smaller higher-priority cumulative one', function (): void {
+    Promotion::factory()->create(['name' => 'Small cumulative', 'priority' => 10, 'stacking' => StackingPolicy::Cumulative, 'actions' => [['type' => 'percentage_off', 'percent' => 5]]]);
+    Promotion::factory()->create(['name' => 'Big exclusive', 'priority' => 1, 'stacking' => StackingPolicy::Exclusive, 'actions' => [['type' => 'percentage_off', 'percent' => 50]]]);
+
+    [$cart] = cartSubtotal($this->carts, 1000, 1);
+
+    // Cumulative 5% (=50) vs exclusive 50% (=500): the exclusive wins, not dropped.
+    expect($this->carts->calculate($cart)->grandTotal()->getMinorAmount()->toInt())->toBe(500);
+});
+
 it('records a free-shipping promotion as a tracked adjustment', function (): void {
     Promotion::factory()->create([
         'name' => 'Free shipping',

@@ -107,32 +107,50 @@ final class PromotionCalculator implements Calculator
     }
 
     /**
+     * Resolve the stacking constraints into the best application set for the
+     * customer: cumulative promotions may stack together; an exclusive or
+     * best-of promotion only applies alone. We build every valid candidate set
+     * (the cumulative stack, and each non-cumulative promotion on its own) and
+     * apply whichever yields the largest total discount — so a better
+     * exclusive/best-of offer is never silently dropped in favour of a smaller
+     * cumulative stack, while the declared constraints are still respected.
+     *
      * @param  list<array{promotion: Promotion, discount: Money}>  $matched
      * @return list<array{promotion: Promotion, discount: Money}>
      */
     private function resolveStacking(array $matched): array
     {
-        return match ($matched[0]['promotion']->stacking) {
-            StackingPolicy::Exclusive => [$matched[0]],
-            StackingPolicy::BestOf => [$this->bestByDiscount($matched)],
-            StackingPolicy::Cumulative => array_values(array_filter(
-                $matched,
-                static fn (array $entry): bool => $entry['promotion']->stacking === StackingPolicy::Cumulative,
-            )),
-        };
-    }
+        $cumulative = array_values(array_filter(
+            $matched,
+            static fn (array $entry): bool => $entry['promotion']->stacking === StackingPolicy::Cumulative,
+        ));
 
-    /**
-     * @param  list<array{promotion: Promotion, discount: Money}>  $matched
-     * @return array{promotion: Promotion, discount: Money}
-     */
-    private function bestByDiscount(array $matched): array
-    {
-        $best = $matched[0];
+        /** @var list<list<array{promotion: Promotion, discount: Money}>> $candidates */
+        $candidates = [];
+
+        if ($cumulative !== []) {
+            $candidates[] = $cumulative;
+        }
 
         foreach ($matched as $entry) {
-            if ($entry['discount']->isGreaterThan($best['discount'])) {
-                $best = $entry;
+            if ($entry['promotion']->stacking !== StackingPolicy::Cumulative) {
+                $candidates[] = [$entry];
+            }
+        }
+
+        $best = [];
+        $bestTotal = -1;
+
+        foreach ($candidates as $candidate) {
+            $total = 0;
+
+            foreach ($candidate as $entry) {
+                $total += $entry['discount']->getMinorAmount()->toInt();
+            }
+
+            if ($total > $bestTotal) {
+                $bestTotal = $total;
+                $best = $candidate;
             }
         }
 
