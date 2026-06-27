@@ -9,6 +9,7 @@ use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
+use Selli\Commerce\Audit\Models\DomainEvent;
 use Selli\Commerce\Enums\GiftCardTransactionType;
 use Selli\Commerce\Events\Order\OrderPlaced;
 use Selli\Commerce\Events\Pricing\GiftCardRedeemed;
@@ -39,6 +40,9 @@ final class RecordPricingUsage
 
         $order = $event->order;
 
+        /** @var array<string, array{name: string, amount: int, currency: string}> $promotions */
+        $promotions = [];
+
         foreach ($this->adjustments($order) as $adjustment) {
             $source = $adjustment['source'] ?? null;
             $data = is_array($adjustment['data'] ?? null) ? $adjustment['data'] : [];
@@ -49,9 +53,16 @@ final class RecordPricingUsage
             match ($source) {
                 'coupon' => $this->recordCoupon($order, $data, $amount, $currency),
                 'gift_card' => $this->recordGiftCard($order, $data, $amount, $currency),
-                'promotion' => $this->recordPromotion($order, $data, $amount, $currency),
+                // A promotion may contribute several adjustment lines (e.g. a
+                // discount plus a free-shipping marker); aggregate by id so it
+                // yields a single PromotionApplied event.
+                'promotion' => $this->collectPromotion($promotions, $data, $amount, $currency),
                 default => null,
             };
+        }
+
+        foreach ($promotions as $promotionId => $promotion) {
+            $this->recordPromotion($order, $promotionId, $promotion['name'], $promotion['amount'], $promotion['currency']);
         }
     }
 
@@ -222,9 +233,13 @@ final class RecordPricingUsage
     }
 
     /**
+     * Accumulate a promotion's adjustment lines by id (summing their amounts)
+     * so the promotion yields exactly one event.
+     *
+     * @param  array<string, array{name: string, amount: int, currency: string}>  $promotions
      * @param  array<array-key, mixed>  $data
      */
-    private function recordPromotion(Order $order, array $data, int $amount, string $currency): void
+    private function collectPromotion(array &$promotions, array $data, int $amount, string $currency): void
     {
         $promotionId = $data['promotion_id'] ?? null;
         $name = $data['name'] ?? '';
@@ -233,13 +248,34 @@ final class RecordPricingUsage
             return;
         }
 
-        $this->events->dispatch(new PromotionApplied(
-            $order,
-            $promotionId,
-            is_string($name) ? $name : '',
-            $amount,
-            $currency,
-        ));
+        if (isset($promotions[$promotionId])) {
+            $promotions[$promotionId]['amount'] += $amount;
+
+            return;
+        }
+
+        $promotions[$promotionId] = [
+            'name' => is_string($name) ? $name : '',
+            'amount' => $amount,
+            'currency' => $currency,
+        ];
+    }
+
+    private function recordPromotion(Order $order, string $promotionId, string $name, int $amount, string $currency): void
+    {
+        // Idempotent per order+promotion (replay-safe) via the audit trail when
+        // domain-event recording is on.
+        $alreadyEmitted = DomainEvent::query()
+            ->where('name', 'PromotionApplied')
+            ->where('subject_id', $order->id)
+            ->where('payload->promotion_id', $promotionId)
+            ->exists();
+
+        if ($alreadyEmitted) {
+            return;
+        }
+
+        $this->events->dispatch(new PromotionApplied($order, $promotionId, $name, $amount, $currency));
     }
 
     /**

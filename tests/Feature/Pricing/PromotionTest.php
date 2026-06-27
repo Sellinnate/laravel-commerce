@@ -6,7 +6,9 @@ use Selli\Commerce\Audit\Models\DomainEvent;
 use Selli\Commerce\Cart\CartManager;
 use Selli\Commerce\Enums\AdjustmentType;
 use Selli\Commerce\Enums\StackingPolicy;
+use Selli\Commerce\Events\Order\OrderPlaced;
 use Selli\Commerce\Order\Actions\PlaceOrder;
+use Selli\Commerce\Pricing\Listeners\RecordPricingUsage;
 use Selli\Commerce\Pricing\Models\Promotion;
 use Selli\Commerce\Tests\Fixtures\Product;
 
@@ -122,6 +124,20 @@ it('still grants free shipping from a non-cumulative promotion alongside a disco
     // The 5% discount applies and the free-shipping perk is not dropped.
     expect($shipping)->not->toBeEmpty()
         ->and($calc->grandTotal()->getMinorAmount()->toInt())->toBe(950);
+});
+
+it('emits exactly one PromotionApplied per promotion and is replay-safe', function (): void {
+    Promotion::factory()->create(['name' => 'Combo', 'actions' => [['type' => 'percentage_off', 'percent' => 10], ['type' => 'free_shipping']]]);
+    [$cart] = cartSubtotal($this->carts, 1000, 1);
+
+    $order = app(PlaceOrder::class)->handle($cart);
+
+    $count = fn () => DomainEvent::query()->where('name', 'PromotionApplied')->where('subject_id', $order->id)->count();
+    expect($count())->toBe(1);
+
+    // Replaying the event does not emit it again.
+    app(RecordPricingUsage::class)->handle(new OrderPlaced($order));
+    expect($count())->toBe(1);
 });
 
 it('records a PromotionApplied event on placement', function (): void {
