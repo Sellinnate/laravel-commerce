@@ -39,12 +39,19 @@ final class InventoryManager implements StockKeeper, StockResolver
 
     public function availableToPromise(string $type, string $id, ?string $tenantId): ?int
     {
-        $onHand = $this->stockItemQuery($type, $id, $tenantId)->sum('on_hand');
-
         if (! $this->stockItemQuery($type, $id, $tenantId)->exists()) {
             // No stock row anywhere → the purchasable is not stock-tracked.
             return null;
         }
+
+        // Only count on-hand in ACTIVE warehouses: fulfilment ships only from
+        // active ones, so promising stock in a disabled warehouse would lead to
+        // a shortfall at checkout. A tracked SKU that lives only in inactive
+        // warehouses therefore reports ATP ≤ 0 rather than null.
+        $onHand = $this->stockItemQuery($type, $id, $tenantId)
+            ->join($this->warehouseTable(), $this->stockTable().'.warehouse_id', '=', $this->warehouseTable().'.id')
+            ->where($this->warehouseTable().'.active', true)
+            ->sum($this->stockTable().'.on_hand');
 
         return (int) $onHand - $this->holdingReserved($type, $id, $tenantId, $this->now());
     }
@@ -90,6 +97,10 @@ final class InventoryManager implements StockKeeper, StockResolver
     public function hold(string $cartId, string $type, string $id, int $quantity, ?string $tenantId): void
     {
         DB::transaction(function () use ($cartId, $type, $id, $quantity, $tenantId): void {
+            // Clean expired holds first so the counts are accurate, then take the
+            // row lock — concurrent holds serialise here.
+            $this->releaseExpiredFor($type, $id, $tenantId);
+
             $warehouse = $this->warehouse($tenantId, null);
             $item = $this->lockItem($type, $id, $tenantId, $warehouse->id);
 
@@ -120,6 +131,19 @@ final class InventoryManager implements StockKeeper, StockResolver
                 $existing->save();
 
                 return;
+            }
+
+            // Atomically re-validate availability for a positive delta under the
+            // lock: the cart's pre-lock check is advisory, so two concurrent
+            // add-to-cart holds must be reconciled here. ATP already accounts for
+            // this cart's previous hold, so the new units we may take is exactly
+            // the current ATP.
+            if ($delta > 0 && ! $this->allowsBackorder($type, $id, $tenantId)) {
+                $available = $this->availableToPromise($type, $id, $tenantId);
+
+                if ($available !== null && $delta > $available) {
+                    throw InsufficientStockException::for("purchasable {$id}", $quantity, max(0, $previous + $available));
+                }
             }
 
             if ($existing !== null) {
@@ -224,20 +248,23 @@ final class InventoryManager implements StockKeeper, StockResolver
     public function releaseExpired(?Carbon $moment = null): int
     {
         $moment ??= $this->now();
-        $released = 0;
 
-        StockReservation::withoutTenantScope()
-            ->where('status', ReservationStatus::Active->value)
-            ->whereNotNull('expires_at')
-            ->where('expires_at', '<=', $moment)
-            ->lockForUpdate()
-            ->get()
-            ->each(function (StockReservation $reservation) use (&$released): void {
-                DB::transaction(fn () => $this->releaseReservation($reservation));
-                $released++;
-            });
+        // One transaction holds the locks for the whole sweep, so overlapping
+        // sweeps serialise and a reservation is never released twice.
+        return DB::transaction(function () use ($moment): int {
+            $expired = StockReservation::withoutTenantScope()
+                ->where('status', ReservationStatus::Active->value)
+                ->whereNotNull('expires_at')
+                ->where('expires_at', '<=', $moment)
+                ->lockForUpdate()
+                ->get();
 
-        return $released;
+            foreach ($expired as $reservation) {
+                $this->releaseReservation($reservation);
+            }
+
+            return $expired->count();
+        });
     }
 
     // ---------------------------------------------------------------------
@@ -379,6 +406,13 @@ final class InventoryManager implements StockKeeper, StockResolver
 
     private function releaseReservation(StockReservation $reservation): void
     {
+        // Idempotency guard: only an active reservation holds stock, so a row
+        // already released/consumed must not be processed (and double-counted)
+        // again by an overlapping sweep.
+        if ($reservation->status !== ReservationStatus::Active) {
+            return;
+        }
+
         $item = $this->lockItem(
             $reservation->purchasable_type,
             $reservation->purchasable_id,
@@ -433,6 +467,7 @@ final class InventoryManager implements StockKeeper, StockResolver
             ->where('purchasable_type', $type)
             ->where('purchasable_id', $id)
             ->when($tenantId === null, fn (Builder $q) => $q->whereNull('tenant_id'), fn (Builder $q) => $q->where('tenant_id', $tenantId))
+            ->orderBy('id')
             ->lockForUpdate()
             ->first();
 
@@ -460,6 +495,11 @@ final class InventoryManager implements StockKeeper, StockResolver
         $warehouse = Warehouse::withoutTenantScope()
             ->where('code', $code)
             ->when($tenantId === null, fn (Builder $q) => $q->whereNull('tenant_id'), fn (Builder $q) => $q->where('tenant_id', $tenantId))
+            // Deterministic pick: a null-tenant unique index does not stop two
+            // concurrent first-time creates from inserting a duplicate default,
+            // so always resolve the oldest row by its monotonic ULID — every
+            // automatic operation then targets the same warehouse.
+            ->orderBy('id')
             ->first();
 
         if ($warehouse instanceof Warehouse) {

@@ -14,6 +14,7 @@ use Selli\Commerce\Exceptions\InsufficientStockException;
 use Selli\Commerce\Inventory\InventoryManager;
 use Selli\Commerce\Inventory\Models\StockMovement;
 use Selli\Commerce\Inventory\Models\StockReservation;
+use Selli\Commerce\Inventory\Models\Warehouse;
 
 beforeEach(function (): void {
     $this->inventory = app(InventoryManager::class);
@@ -150,6 +151,43 @@ it('releases the unused remainder of a partially consumed hold', function (): vo
     // on_hand 7, no orphaned reserved: ATP is the full 7, not 5.
     expect($this->inventory->availableToPromise('product', 'p1', null))->toBe(7)
         ->and(StockReservation::where('reference_id', 'cart-1')->where('status', ReservationStatus::Active->value)->count())->toBe(0);
+});
+
+it('atomically refuses a hold that would oversell under the lock', function (): void {
+    config()->set('commerce.inventory.backorder', 'deny');
+    $this->inventory->receive('product', 'p1', 2);
+    $this->inventory->hold('cart-1', 'product', 'p1', 2, null); // holds all
+
+    // A hold for another cart beyond ATP is refused at the row lock, even though
+    // an advisory pre-check might have passed concurrently.
+    expect(fn () => $this->inventory->hold('cart-2', 'product', 'p1', 1, null))
+        ->toThrow(InsufficientStockException::class)
+        ->and($this->inventory->availableToPromise('product', 'p1', null))->toBe(0);
+});
+
+it('excludes inactive warehouses from available-to-promise', function (): void {
+    // Stock that lives only in a disabled warehouse cannot be promised, because
+    // fulfilment never ships from it.
+    Warehouse::create(['code' => 'closed', 'name' => 'Closed', 'active' => false]);
+    $this->inventory->receive('product', 'p1', 10, warehouseCode: 'closed');
+
+    expect($this->inventory->availableToPromise('product', 'p1', null))->toBe(0);
+
+    // Stock in an active warehouse counts.
+    $this->inventory->receive('product', 'p1', 4);
+    expect($this->inventory->availableToPromise('product', 'p1', null))->toBe(4);
+});
+
+it('is idempotent across overlapping expired sweeps', function (): void {
+    $this->inventory->receive('product', 'p1', 10);
+    config()->set('commerce.inventory.reservation_ttl', 30);
+    $this->inventory->hold('cart-1', 'product', 'p1', 4, null);
+    Carbon::setTestNow(Carbon::now()->addHour());
+
+    expect($this->inventory->releaseExpired())->toBe(1)
+        ->and($this->inventory->releaseExpired())->toBe(0) // already released, not re-counted
+        ->and($this->inventory->availableToPromise('product', 'p1', null))->toBe(10); // not double-decremented
+    Carbon::setTestNow();
 });
 
 it('isolates stock between tenants', function (): void {

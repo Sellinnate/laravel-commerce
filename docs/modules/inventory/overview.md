@@ -5,7 +5,7 @@ description: "The optional Inventory module: per-warehouse stock, available-to-p
 
 # Inventory overview
 
-The Inventory module makes the engine refuse to sell what isn't there. It is **optional**: an app selling services or unlimited digital goods simply leaves it off, and `isAvailable()` falls back to the host's own answer. When it is on, availability becomes **available-to-promise** (ATP) and stock is decremented under a lock at checkout, so two buyers can never both win the last unit.
+The Inventory module makes the engine refuse to sell what isn't there. It is **optional**: an app selling services or unlimited digital goods simply leaves it off, and `isAvailable()` falls back to the host's own answer. When it is on, availability becomes **available-to-promise** (ATP) and stock is decremented under a lock at checkout, so — with the default `backorder = deny` policy — two buyers can never both win the last unit. (Under `backorder = allow` the second sale is permitted by policy and recorded as a [backorder](/modules/inventory/warehouses-ledger).)
 
 Toggle it with `commerce.modules.inventory` (on by default).
 
