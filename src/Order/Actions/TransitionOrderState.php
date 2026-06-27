@@ -15,6 +15,7 @@ use Selli\Commerce\Events\Order\OrderConfirmed;
 use Selli\Commerce\Events\Order\OrderProcessing;
 use Selli\Commerce\Events\Order\OrderRefunded;
 use Selli\Commerce\Events\Order\OrderStateTransitioned;
+use Selli\Commerce\Exceptions\OrderNotFoundException;
 use Selli\Commerce\Order\Models\Order;
 use Selli\Commerce\Order\Models\OrderStateTransition;
 use Selli\Commerce\Order\States\Cancelled;
@@ -42,13 +43,6 @@ final class TransitionOrderState
      */
     public function handle(Order $order, string $toState, ?Model $by = null, ?string $reason = null): Order
     {
-        // Always authorise the transition. With an authorizable actor we gate
-        // as that user; otherwise we gate against the default Gate user. The
-        // default OrderPolicy is permissive, so headless apps keep working
-        // while integrators who tighten the policy gate every path.
-        $authorizer = $by instanceof Authorizable ? $this->gate->forUser($by) : $this->gate;
-        $authorizer->authorize('transition', [$order, $toState]);
-
         $actorId = null;
         if ($by !== null) {
             /** @var int|string $key */
@@ -61,16 +55,27 @@ final class TransitionOrderState
         // The state change and its append-only audit row are atomic, and the
         // order row is locked and re-read first so two concurrent handlers
         // cannot each transition from a stale state and clobber one another.
+        // Authorisation runs against the freshly-read state, not a stale copy.
         DB::transaction(function () use (&$from, $order, $toState, $by, $actorId, $reason): void {
             $locked = Order::withoutTenantScope()
                 ->whereKey($order->id)
                 ->lockForUpdate()
                 ->first();
 
-            if ($locked !== null) {
-                $order->setRawAttributes($locked->getAttributes(), true);
-                $order->syncOriginal();
+            if ($locked === null) {
+                throw OrderNotFoundException::forTransition($order->id);
             }
+
+            $order->setRawAttributes($locked->getAttributes(), true);
+            $order->syncOriginal();
+
+            // Always authorise the transition against the current persisted
+            // state. With an authorizable actor we gate as that user; otherwise
+            // against the default Gate user. The default OrderPolicy is
+            // permissive, so headless apps keep working while integrators who
+            // tighten the policy gate every path.
+            $authorizer = $by instanceof Authorizable ? $this->gate->forUser($by) : $this->gate;
+            $authorizer->authorize('transition', [$order, $toState]);
 
             $from = $order->state::$name;
             $order->state->transitionTo($toState);

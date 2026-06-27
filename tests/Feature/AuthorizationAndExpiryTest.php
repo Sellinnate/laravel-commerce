@@ -6,6 +6,8 @@ use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Contracts\Auth\Access\Authorizable;
 use Illuminate\Support\Facades\Gate;
 use Selli\Commerce\Cart\CartManager;
+use Selli\Commerce\Exceptions\CartNotMutableException;
+use Selli\Commerce\Exceptions\OrderNotFoundException;
 use Selli\Commerce\Order\Actions\PlaceOrder;
 use Selli\Commerce\Order\Actions\TransitionOrderState;
 use Selli\Commerce\Order\Models\Order;
@@ -46,6 +48,24 @@ it('allows transitions under the default permissive policy', function (): void {
 
     expect($order->state)->toBeInstanceOf(Confirmed::class);
 });
+
+it('refuses to mutate an expired cart even when its id is held', function (): void {
+    $carts = app(CartManager::class);
+    $product = Product::create(['name' => 'Widget', 'price_cents' => 1000]);
+    $cart = $carts->create('EUR');
+
+    $cart->forceFill(['expires_at' => now()->subDay()])->save();
+
+    expect(fn () => $carts->add($cart, $product, 1))
+        ->toThrow(CartNotMutableException::class);
+});
+
+it('refuses to transition an order that no longer exists', function (): void {
+    $order = placeSimpleOrder();
+    $order->forceDelete();
+
+    app(TransitionOrderState::class)->handle($order, Confirmed::class);
+})->throws(OrderNotFoundException::class);
 
 it('does not resurrect an expired cart for an owner', function (): void {
     $carts = app(CartManager::class);

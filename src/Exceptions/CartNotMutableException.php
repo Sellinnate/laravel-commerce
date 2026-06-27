@@ -12,4 +12,9 @@ final class CartNotMutableException extends CommerceException
     {
         return new self("The cart cannot be modified while in status \"{$status->value}\".");
     }
+
+    public static function expired(string $cartId): self
+    {
+        return new self("Cart [{$cartId}] has expired and cannot be modified.");
+    }
 }

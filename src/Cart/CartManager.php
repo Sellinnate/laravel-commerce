@@ -385,7 +385,11 @@ final class CartManager
 
     private function assertMutable(Cart $cart): void
     {
-        if (! $cart->isMutable()) {
+        if ($cart->isExpired()) {
+            throw CartNotMutableException::expired($cart->id);
+        }
+
+        if (! $cart->status->isMutable()) {
             throw CartNotMutableException::inStatus($cart->status);
         }
     }
@@ -407,11 +411,16 @@ final class CartManager
             throw CartNotFoundException::forMutation($cart->id);
         }
 
-        if (! $locked->isMutable()) {
+        if ($locked->isExpired()) {
+            throw CartNotMutableException::expired($locked->id);
+        }
+
+        if (! $locked->status->isMutable()) {
             throw CartNotMutableException::inStatus($locked->status);
         }
 
         $cart->status = $locked->status;
+        $cart->expires_at = $locked->expires_at;
     }
 
     private function assertBelongsToCart(Cart $cart, CartItem $item): void

@@ -72,6 +72,10 @@ final class PlaceOrder
                 throw CartNotMutableException::inStatus($locked->status);
             }
 
+            if ($locked->isExpired()) {
+                throw CartNotMutableException::expired($locked->id);
+            }
+
             $cart->load('items');
 
             // Re-check emptiness under the lock: a concurrent clear() could

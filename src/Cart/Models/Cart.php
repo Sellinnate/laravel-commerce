@@ -73,9 +73,14 @@ class Cart extends Model
         return $this->items->isEmpty();
     }
 
+    public function isExpired(): bool
+    {
+        return $this->expires_at !== null && $this->expires_at->isPast();
+    }
+
     public function isMutable(): bool
     {
-        return $this->status->isMutable();
+        return $this->status->isMutable() && ! $this->isExpired();
     }
 
     protected static function newFactory(): CartFactory
