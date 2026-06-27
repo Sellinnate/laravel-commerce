@@ -31,29 +31,34 @@ final class PriceBookResolver implements PriceResolver
         $tenantId = $this->tenantId($context);
         $now = now();
 
-        $candidates = Price::query()
-            ->with('priceBook')
+        $prices = Price::query()
             ->where('purchasable_type', $purchasable->getPurchasableType())
             ->where('purchasable_id', $purchasable->getPurchasableId())
             ->where('currency', $currency)
             ->where('min_quantity', '<=', $quantity)
+            ->get();
+
+        // Load the parent books WITHOUT the ambient tenant scope and match the
+        // context tenant explicitly, so pricing follows the cart's tenant even
+        // when the ambient TenantContext is null or out of sync.
+        $books = PriceBook::withoutTenantScope()
+            ->whereKey($prices->pluck('price_book_id')->all())
             ->get()
-            // Match the context tenant explicitly: pricing must follow the
-            // cart's tenant, not whatever (possibly null) tenant context the
-            // caller runs in.
-            ->filter(function (Price $price) use ($currency, $segment, $tenantId, $now): bool {
-                $book = $price->priceBook;
+            ->keyBy('id');
 
-                return $book instanceof PriceBook
-                    && $book->tenant_id === $tenantId
-                    && $book->currency === $currency
-                    && $book->isValidAt($now)
-                    && ($book->segment === null || $book->segment === $segment);
-            });
+        $candidates = $prices->filter(function (Price $price) use ($books, $currency, $segment, $tenantId, $now): bool {
+            $book = $books->get($price->price_book_id);
 
-        $best = $candidates->sort(function (Price $a, Price $b) use ($segment): int {
-            $bookA = $a->priceBook;
-            $bookB = $b->priceBook;
+            return $book instanceof PriceBook
+                && $book->tenant_id === $tenantId
+                && $book->currency === $currency
+                && $book->isValidAt($now)
+                && ($book->segment === null || $book->segment === $segment);
+        });
+
+        $best = $candidates->sort(function (Price $a, Price $b) use ($books, $segment): int {
+            $bookA = $books->get($a->price_book_id);
+            $bookB = $books->get($b->price_book_id);
 
             $specificityA = $bookA instanceof PriceBook && $bookA->segment === $segment ? 1 : 0;
             $specificityB = $bookB instanceof PriceBook && $bookB->segment === $segment ? 1 : 0;

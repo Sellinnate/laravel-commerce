@@ -18,6 +18,7 @@ use Selli\Commerce\Pricing\Models\Coupon;
 use Selli\Commerce\Pricing\Models\CouponRedemption;
 use Selli\Commerce\Pricing\Models\GiftCard;
 use Selli\Commerce\Pricing\Models\GiftCardTransaction;
+use Selli\Commerce\Tenancy\TenantScope;
 
 /**
  * On OrderPlaced, records the usage of every pricing adjustment frozen onto the
@@ -107,6 +108,7 @@ final class RecordPricingUsage
             }
 
             $alreadyRecorded = $coupon->redemptions()
+                ->withoutGlobalScope(TenantScope::class)
                 ->where('order_id', $order->id)
                 ->exists();
 
@@ -151,6 +153,7 @@ final class RecordPricingUsage
 
             // Idempotent per order: a replayed event must not debit twice.
             $alreadyRedeemed = $giftCard->transactions()
+                ->withoutGlobalScope(TenantScope::class)
                 ->where('order_id', $order->id)
                 ->where('type', GiftCardTransactionType::Redeem->value)
                 ->exists();
