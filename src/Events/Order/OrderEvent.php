@@ -4,12 +4,17 @@ declare(strict_types=1);
 
 namespace Selli\Commerce\Events\Order;
 
+use Illuminate\Contracts\Events\ShouldDispatchAfterCommit;
 use Illuminate\Foundation\Events\Dispatchable;
 use Selli\Commerce\Audit\AuditRecord;
 use Selli\Commerce\Audit\Contracts\Recordable;
 use Selli\Commerce\Order\Models\Order;
 
-abstract class OrderEvent implements Recordable
+/**
+ * Base for order domain events. Implements {@see ShouldDispatchAfterCommit} so
+ * events raised inside a DB transaction dispatch only after it commits.
+ */
+abstract class OrderEvent implements Recordable, ShouldDispatchAfterCommit
 {
     use Dispatchable;
 
