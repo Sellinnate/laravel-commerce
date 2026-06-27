@@ -29,7 +29,7 @@ With `commerce.modules.tax` set to `false`, nothing is taxed. The `NullTaxResolv
 
 ## Where it sits in the pipeline
 
-```
+```text
 PromotionCalculator
   → CouponDiscountCalculator
   → TaxCalculator

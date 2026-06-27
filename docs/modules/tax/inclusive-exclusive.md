@@ -11,7 +11,7 @@ There are two ways a catalogue price can relate to tax: the price already contai
 
 When `prices_include_tax = true`, the line price already contains tax. The tax is **derived from the gross** rather than added:
 
-```
+```text
 tax = gross × rate ÷ (1 + rate)
 ```
 
@@ -20,7 +20,7 @@ It is recorded as an **informational** adjustment that does NOT add to the total
 ::: card "Worked example — inclusive"
 A €122.00 line at 22%:
 
-```
+```text
 tax   = 122.00 × 0.22 ÷ 1.22 = 22.00
 total = 122.00              (unchanged)
 ```
@@ -32,7 +32,7 @@ The customer is charged €122.00; €22.00 of that is reported as tax for the r
 
 When `prices_include_tax = false`, the price is net and tax is **added** on top:
 
-```
+```text
 tax   = net × rate
 total = net + tax
 ```
@@ -40,7 +40,7 @@ total = net + tax
 ::: card "Worked example — exclusive"
 A €100.00 line at 22%:
 
-```
+```text
 tax   = 100.00 × 0.22 = 22.00
 total = 100.00 + 22.00 = 122.00
 ```
@@ -68,7 +68,7 @@ Tax never runs on the raw subtotal. It runs **after** promotions and coupons in 
 ::: card "Worked example — discounted base (exclusive)"
 A €100.00 line, a 10% coupon, then 22% tax:
 
-```
+```text
 discounted base = 100.00 − 10% = 90.00
 tax             = 90.00 × 0.22 = 19.80
 total           = 90.00 + 19.80 = 109.80

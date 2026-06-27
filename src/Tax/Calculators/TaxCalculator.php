@@ -61,12 +61,15 @@ final class TaxCalculator implements Calculator
 
         $relief = $this->relief($tax);
 
-        // Exclusive price under relief: nothing to add — the price is already
-        // net; one annotation records why no VAT was charged.
-        if ($relief !== null && ! $inclusive) {
+        // Under relief no VAT is charged: record a zero, annotated tax line so
+        // the breakdown carries "VAT 0" and the reason, and tax_total stays zero.
+        if ($relief !== null) {
             $this->annotate($calculation, $relief['label'], $relief['data']);
 
-            return;
+            // Exclusive prices are already net — there is nothing to remove.
+            if (! $inclusive) {
+                return;
+            }
         }
 
         // Only CART-level discounts are spread proportionally across lines; a
@@ -97,18 +100,20 @@ final class TaxCalculator implements Calculator
             }
 
             if ($relief !== null) {
-                // Inclusive price under relief: back out the embedded VAT so the
-                // buyer actually pays the net amount, not the tax-inclusive one.
+                // Inclusive price under relief: the catalogue price embeds VAT,
+                // so remove it as a relief *discount* (not a negative tax). The
+                // buyer pays the net amount while tax_total stays zero and the
+                // gross subtotal still reconciles (gross − relief + 0 tax = net).
                 $embedded = $this->rounding->round(
                     $net->multipliedBy($rate->basisPoints)->dividedBy(10000 + $rate->basisPoints, RoundingMode::HalfUp),
                 );
 
                 if (! $embedded->isZero()) {
                     $line->addAdjustment(new Adjustment(
-                        AdjustmentType::Tax,
+                        AdjustmentType::Discount,
                         $relief['label'],
                         $embedded->multipliedBy(-1),
-                        'tax',
+                        'tax_relief',
                         true,
                         $relief['data'] + ['category' => $category, 'rate' => $rate->basisPoints, 'relief' => true],
                     ));

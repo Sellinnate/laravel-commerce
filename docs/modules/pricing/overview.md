@@ -32,10 +32,10 @@ With `commerce.modules.pricing` set to `false`, the engine falls back to plain p
 
 When the module is on, the calculators are auto-composed in this order:
 
-```
+```text
 PromotionCalculator
   → CouponDiscountCalculator
-  → (TaxCalculator, future)
+  → TaxCalculator
   → GiftCardCalculator
   → GrandTotalCalculator
 ```

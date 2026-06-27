@@ -77,7 +77,7 @@ foreach ($order->transitions as $t) {
 }
 ```
 
-```
+```text
 2026-06-27 10:01: pending → confirmed by user:42 (Payment captured)
 2026-06-27 10:05: confirmed → processing by user:42 (Picking started)
 2026-06-27 11:30: processing → completed by user:42 (Shipped)

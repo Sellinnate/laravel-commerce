@@ -54,10 +54,13 @@ final class MoneyMath
             return array_fill(0, $count, $amount->multipliedBy(0));
         }
 
-        // No positive weights to spread across (e.g. every line subtotal is
+        // No positive weight to spread across (e.g. every line subtotal is
         // zero): split equally so a non-zero amount is never silently dropped
-        // and the parts still sum to the whole.
-        if (array_sum($weights) === 0) {
+        // and the parts still sum to the whole. This is deliberately gated on
+        // "no positive weight" rather than "weights sum to zero", so a mixed set
+        // like [100, -100] is NOT flattened to an equal split — it falls through
+        // to Brick, which rejects the negative ratio loudly.
+        if (array_filter($weights, static fn (int $w): bool => $w > 0) === []) {
             $weights = array_fill(0, $count, 1);
         }
 

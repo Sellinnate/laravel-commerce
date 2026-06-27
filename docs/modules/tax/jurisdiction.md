@@ -141,10 +141,10 @@ The package does not validate VAT numbers or decide who qualifies. The host dete
 Both exemption and reverse charge are *relief*: the buyer must end up paying the net, tax-free amount. The way the calculator gets there depends on `commerce.tax.prices_include_tax`:
 
 - **Exclusive prices** (`prices_include_tax = false`): the catalogue price is already net, so there is nothing to remove. A **zero, annotated** tax line records the `exempt_reason` / `vat_number`, and the total is unchanged.
-- **Inclusive prices** (`prices_include_tax = true`, the default): the catalogue price embeds VAT, so the calculator **backs the embedded VAT out** of each line as a negative, total-affecting tax adjustment (carrying `relief: true` and the same annotation). A €122.00 gross line under 22% relief becomes a €100.00 charge — the buyer never pays VAT the breakdown says was not applied.
+- **Inclusive prices** (`prices_include_tax = true`, the default): the catalogue price embeds VAT, so the calculator **removes the embedded VAT** from each line as a *relief discount* (source `tax_relief`, carrying `relief: true`) and records a zero, annotated VAT line. A €122.00 gross line under 22% relief becomes a €100.00 charge — the buyer never pays VAT the breakdown says was not applied.
 
-::: callout note "Why the tax total can be negative under inclusive relief"
-Line subtotals are frozen from the catalogue (gross) price and never mutated, so the VAT removal shows up as a negative `tax_total` that reconciles the gross subtotal down to the net grand total (122.00 − 22.00 = 100.00). The adjustment is tagged `relief: true` so the breakdown stays explainable.
+::: callout note "How the breakdown reconciles under inclusive relief"
+Line subtotals are frozen from the catalogue (gross) price and never mutated. The VAT removal is recorded as a `tax_relief` discount, so `tax_total` stays **zero** (an exempt/reverse-charge sale charges no VAT) while the gross subtotal reconciles down to the net grand total: 122.00 (gross) − 22.00 (relief) + 0.00 (VAT) = 100.00. The relief adjustment is tagged `relief: true` and labelled with the reason, so the breakdown stays explainable and distinct from commercial discounts (which use other sources).
 :::
 
 See also: [Tax overview](/modules/tax/overview) · [Inclusive vs exclusive](/modules/tax/inclusive-exclusive) · [Multi-tenancy](/concepts/multi-tenancy) · [Pipeline](/concepts/pipeline).

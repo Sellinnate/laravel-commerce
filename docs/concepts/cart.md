@@ -25,7 +25,7 @@ It exposes `items()` (hasMany `CartItem`), `isEmpty()` and `isMutable()`. A `Car
 
 ## Lifecycle
 
-```
+```text
             ┌─────────┐   PlaceOrder    ┌───────────┐
             │ Active  │ ──────────────▶ │ Converted │
             └────┬────┘                 └───────────┘
@@ -45,7 +45,7 @@ Resolve the manager from the container and drive everything through it:
 ```php
 use Selli\Commerce\Cart\CartManager;
 
-$cart = app(CartManager::class);
+$manager = app(CartManager::class);
 ```
 
 | Method | Purpose |
@@ -62,9 +62,9 @@ $cart = app(CartManager::class);
 | `recalculate($cart)` | Re-resolve live unit prices, persist, then calculate. |
 
 ```php
-$cart = $cart->forOwner('user', (string) $user->id, 'EUR');
-$cart->add($cart, $product, quantity: 2);
-$calc = $cart->calculate($cart); // a Calculation, nothing written
+$cart = $manager->forOwner('user', (string) $user->id, 'EUR');
+$manager->add($cart, $product, quantity: 2);
+$calc = $manager->calculate($cart); // a Calculation, nothing written
 ```
 
 ::: callout info "calculate vs recalculate"

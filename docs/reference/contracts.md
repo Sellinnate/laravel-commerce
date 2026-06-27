@@ -5,7 +5,7 @@ description: "Every contract in the engine, its methods, default implementation,
 
 # Contracts Reference
 
-The engine is a set of interfaces with sensible defaults. Every one lives in `Selli\Commerce\Contracts` (audit aside) and every one is swappable. This is the package's whole extensibility model: **bind your own implementation and the engine adopts it**.
+The engine is a set of interfaces with sensible defaults. Each contract lives in `Selli\Commerce\Contracts` (audit aside) and is swappable. This is the package's whole extensibility model: **bind your own implementation and the engine adopts it**.
 
 ## The contracts
 

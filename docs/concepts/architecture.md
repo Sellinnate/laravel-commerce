@@ -13,7 +13,7 @@ practical. Persistence, HTTP and UI are adapters behind interfaces.
 
 Each area follows the same hexagonal anatomy:
 
-```
+```text
 Domain/         contracts, value objects, calculation, enums, events  (framework-light)
 Application/    actions / services / use-cases (CartManager, PlaceOrder, TransitionOrderState)
 Infrastructure/ Eloquent models, repositories, casts, migrations

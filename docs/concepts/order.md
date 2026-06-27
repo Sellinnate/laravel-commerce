@@ -40,7 +40,7 @@ If a product's price later changes, or the product is deleted entirely, the orde
 
 Built on `spatie/laravel-model-states`. States live in `Selli\Commerce\Order\States` and all extend the abstract `OrderState`: `Pending`, `Confirmed`, `Processing`, `Completed`, `Cancelled`, `Refunded`, `PartiallyRefunded`.
 
-```
+```text
             ┌─────────┐
             │ Pending │
             └──┬───┬──┘

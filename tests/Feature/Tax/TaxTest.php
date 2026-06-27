@@ -94,12 +94,15 @@ it('backs out embedded VAT for an exempt customer on inclusive prices', function
     $cart = taxedCart($this->carts, 12200, 1, ['country' => 'IT', 'exempt' => true, 'exempt_reason' => 'NGO']);
 
     $calc = $this->carts->calculate($cart);
-    $taxAdjustment = collect($calc->lines())->flatMap(fn ($l) => $l->adjustments())
-        ->first(fn ($a) => $a->type === AdjustmentType::Tax);
+    $relief = collect($calc->lines())->flatMap(fn ($l) => $l->adjustments())
+        ->first(fn ($a) => $a->source === 'tax_relief');
 
-    // 122.00 gross embeds 22.00 VAT; the exempt buyer pays the 100.00 net.
+    // 122.00 gross embeds 22.00 VAT; the exempt buyer pays the 100.00 net, the
+    // VAT removal is a relief discount, and tax_total stays zero (not negative).
     expect($calc->grandTotal()->getMinorAmount()->toInt())->toBe(10000)
-        ->and($taxAdjustment?->data['exempt'] ?? null)->toBeTrue();
+        ->and($calc->taxTotal()->getMinorAmount()->toInt())->toBe(0)
+        ->and($relief?->amount->getMinorAmount()->toInt() ?? null)->toBe(-2200)
+        ->and($relief?->data['relief'] ?? null)->toBeTrue();
 });
 
 it('backs out embedded VAT under reverse charge on inclusive prices', function (): void {
@@ -107,12 +110,14 @@ it('backs out embedded VAT under reverse charge on inclusive prices', function (
     $cart = taxedCart($this->carts, 12200, 1, ['country' => 'IT', 'reverse_charge' => true, 'vat_number' => 'IT123']);
 
     $calc = $this->carts->calculate($cart);
-    $taxAdjustment = collect($calc->lines())->flatMap(fn ($l) => $l->adjustments())
-        ->first(fn ($a) => $a->type === AdjustmentType::Tax);
+    $relief = collect($calc->lines())->flatMap(fn ($l) => $l->adjustments())
+        ->first(fn ($a) => $a->source === 'tax_relief');
 
-    // The B2B buyer self-accounts; they pay only the 100.00 net, not 122.00.
+    // The B2B buyer self-accounts; they pay only the 100.00 net, not 122.00,
+    // tax_total stays zero, and the removal is recorded as a relief discount.
     expect($calc->grandTotal()->getMinorAmount()->toInt())->toBe(10000)
-        ->and($taxAdjustment?->data['reverse_charge'] ?? null)->toBeTrue();
+        ->and($calc->taxTotal()->getMinorAmount()->toInt())->toBe(0)
+        ->and($relief?->data['reverse_charge'] ?? null)->toBeTrue();
 });
 
 it('does not grant the reverse charge without a VAT number', function (): void {

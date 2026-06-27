@@ -48,9 +48,7 @@ A wildcard listener persists **every** `Recordable` event, append-only, into `co
 | `tenant_id` | Stamped from the [TenantContext](/concepts/multi-tenancy). |
 | `created_at` | When it happened. |
 
-Nothing in this table is ever updated or deleted. In addition, every order state change is logged in `commerce_order_state_transitions` (see [Order](/concepts/order)). Together they give a complete, tamper-evident history for free — no configuration required.
-
-Toggle the domain-event recorder with `audit.record_domain_events`.
+Nothing in this table is ever updated or deleted. The order state-transition log in `commerce_order_state_transitions` (see [Order](/concepts/order)) is always written and is not configurable; the **domain-event recorder** that fills this table is the part you can toggle with `audit.record_domain_events` (on by default). With both on you get a complete, tamper-evident history with no extra setup.
 
 ## Level 2 — event sourcing (opt-in)
 
