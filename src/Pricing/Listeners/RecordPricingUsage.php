@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Selli\Commerce\Pricing\Listeners;
 
-use Brick\Money\Money;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Config;
@@ -92,12 +91,11 @@ final class RecordPricingUsage
             return;
         }
 
-        // Limits are re-checked under the coupon row lock. If the coupon is
-        // exhausted by the time the order settles (a concurrent order consumed
-        // the last use after this cart's apply-time check), the discount is
-        // reversed on the order rather than exceeding the cap — the same
-        // reconciliation used for gift-card shortfalls. Recording is idempotent
-        // per order so a replayed event never double-counts.
+        // The order is frozen and authoritative once placed, so settlement never
+        // mutates its totals. Usage limits are enforced at application time; here
+        // we record the actual consumption append-only under the coupon row lock
+        // (usage_count is the source of truth) and stay idempotent per order so a
+        // replayed event never double-counts.
         DB::transaction(function () use ($order, $couponId, $amount, $currency): void {
             $coupon = $this->scopedToOrderTenant(Coupon::withoutTenantScope(), $order)
                 ->whereKey($couponId)
@@ -116,12 +114,6 @@ final class RecordPricingUsage
                 return;
             }
 
-            if ($this->couponExhausted($coupon, $order)) {
-                $this->reverseDiscount($order, $amount, $currency);
-
-                return;
-            }
-
             $coupon->increment('usage_count');
 
             CouponRedemption::query()->create([
@@ -134,34 +126,6 @@ final class RecordPricingUsage
                 'currency' => $currency,
             ]);
         });
-    }
-
-    private function couponExhausted(Coupon $coupon, Order $order): bool
-    {
-        if ($coupon->hasReachedGlobalLimit()) {
-            return true;
-        }
-
-        if ($coupon->per_customer_limit === null || $order->customer_id === null) {
-            return false;
-        }
-
-        $count = $coupon->redemptions()
-            ->where('customer_type', $order->customer_type)
-            ->where('customer_id', $order->customer_id)
-            ->count();
-
-        return $count >= $coupon->per_customer_limit;
-    }
-
-    private function reverseDiscount(Order $order, int $amount, string $currency): void
-    {
-        if ($amount <= 0 || $order->grand_total === null) {
-            return;
-        }
-
-        $order->grand_total = $order->grand_total->plus(Money::ofMinor($amount, $currency));
-        $order->save();
     }
 
     /**
@@ -195,10 +159,12 @@ final class RecordPricingUsage
                 return;
             }
 
-            // The debit is capped at the real remaining balance under the lock,
-            // so the ledger can never go negative (money integrity is preserved)
-            // even if overlapping checkouts each computed tender from the live
-            // balance. Hard reservation of tender is a planned v1.x feature.
+            // The order is frozen once placed, so settlement never mutates its
+            // totals. The debit is capped at the real remaining balance under the
+            // lock, so the ledger can never go negative (money integrity is
+            // preserved) even if overlapping checkouts each computed tender from
+            // the live balance. Hard reservation of tender is a planned v1.x
+            // feature.
             $applied = min($amount, $giftCard->balance);
 
             if ($applied <= 0) {
@@ -216,17 +182,6 @@ final class RecordPricingUsage
                 'currency' => $currency,
                 'order_id' => $order->id,
             ]);
-
-            // If the card actually covered less than the frozen tender (the
-            // balance was spent between calculation and settlement), add the
-            // shortfall back onto the order so it never shows more gift-card
-            // tender than was really redeemed.
-            $shortfall = $amount - $applied;
-
-            if ($shortfall > 0 && $order->grand_total !== null) {
-                $order->grand_total = $order->grand_total->plus(Money::ofMinor($shortfall, $currency));
-                $order->save();
-            }
 
             $this->events->dispatch(new GiftCardRedeemed($giftCard, $applied, $order->id));
         });

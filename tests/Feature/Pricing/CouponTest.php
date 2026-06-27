@@ -188,7 +188,7 @@ it('carries applied coupon codes when a guest cart merges into a user cart', fun
         ->and($this->carts->calculate($user)->discountTotal()->getMinorAmount()->toInt())->toBe(-200);
 });
 
-it('reverses a coupon discount when the coupon is exhausted at settlement', function (): void {
+it('never mutates the frozen order total at settlement and records usage truthfully', function (): void {
     $coupon = Coupon::factory()->create(['code' => 'ONCE', 'usage_limit' => 1, 'usage_count' => 1]);
 
     $order = Order::factory()->create([
@@ -207,10 +207,10 @@ it('reverses a coupon discount when the coupon is exhausted at settlement', func
 
     app(RecordPricingUsage::class)->handle(new OrderPlaced($order));
 
-    // Coupon was already at its limit → discount reversed, no new redemption.
-    expect($order->fresh()->grand_total->getMinorAmount()->toInt())->toBe(2000)
-        ->and($coupon->fresh()->usage_count)->toBe(1)
-        ->and(CouponRedemption::query()->where('coupon_id', $coupon->id)->count())->toBe(0);
+    // The placed order is authoritative and is never mutated; consumption is
+    // recorded truthfully (usage_count is the source of truth).
+    expect($order->fresh()->grand_total->getMinorAmount()->toInt())->toBe(1800)
+        ->and(CouponRedemption::query()->where('coupon_id', $coupon->id)->where('order_id', $order->id)->count())->toBe(1);
 });
 
 it('records coupon usage when the order is placed', function (): void {

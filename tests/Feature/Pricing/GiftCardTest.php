@@ -104,7 +104,7 @@ it('does not double-debit a gift card when the placed event is replayed', functi
         ->and(GiftCardTransaction::query()->where('gift_card_id', $giftCard->id)->count())->toBe(1);
 });
 
-it('reconciles the order total when a gift card cannot cover the frozen tender', function (): void {
+it('debits only the real balance without mutating the frozen order total', function (): void {
     $giftCard = GiftCard::factory()->create(['code' => 'GIFT', 'initial_amount' => 1000, 'balance' => 400]);
 
     $order = Order::factory()->create([
@@ -123,9 +123,10 @@ it('reconciles the order total when a gift card cannot cover the frozen tender',
 
     app(RecordPricingUsage::class)->handle(new OrderPlaced($order));
 
-    // Only 400 was really redeemed → the 600 shortfall is added back to the order.
+    // The ledger debits only the real 400 (never negative); the placed order is
+    // authoritative and is not mutated.
     expect($giftCard->fresh()->balance)->toBe(0)
-        ->and($order->fresh()->grand_total->getMinorAmount()->toInt())->toBe(2600)
+        ->and($order->fresh()->grand_total->getMinorAmount()->toInt())->toBe(2000)
         ->and(GiftCardTransaction::query()->where('gift_card_id', $giftCard->id)->where('amount', 400)->exists())->toBeTrue();
 });
 
