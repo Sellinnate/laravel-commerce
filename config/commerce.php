@@ -67,14 +67,39 @@ return [
     |--------------------------------------------------------------------------
     | Calculation pipeline
     |--------------------------------------------------------------------------
-    | Ordered list of calculator classes resolved from the container. Modules
-    | inject their calculators here; reorder freely. GrandTotalCalculator must
-    | run last so rounding consolidates everything.
+    | Leave empty to auto-compose the pipeline from the enabled modules
+    | (Pricing → Tax → … → GrandTotal). Set a non-empty ordered list of
+    | calculator class names to take full manual control; GrandTotalCalculator
+    | must run last so rounding consolidates everything.
     */
     'pipeline' => [
-        // Pricing, Tax and Inventory modules splice their calculators in here
-        // via config publishing; the core guarantees the final consolidation.
-        GrandTotalCalculator::class,
+        // GrandTotalCalculator::class,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Extra calculators
+    |--------------------------------------------------------------------------
+    | Calculator classes appended to the auto-composed pipeline, just before
+    | GrandTotalCalculator. The seam for project-specific calculators (loyalty
+    | discount, eco-fee, …) without taking over the whole pipeline.
+    */
+    'pipeline_append' => [
+        // App\Commerce\LoyaltyDiscountCalculator::class,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Pricing & Promotions module
+    |--------------------------------------------------------------------------
+    */
+    'pricing' => [
+        // Default customer segment used when none is supplied in the context.
+        'default_segment' => env('COMMERCE_DEFAULT_SEGMENT', 'default'),
+
+        // Default stacking policy for promotions that do not declare one:
+        // "exclusive" (best single), "cumulative" (all apply), "best_of".
+        'stacking' => env('COMMERCE_PROMO_STACKING', 'cumulative'),
     ],
 
     /*

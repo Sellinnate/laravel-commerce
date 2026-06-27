@@ -7,6 +7,7 @@ namespace Selli\Commerce\Order\Actions;
 use Brick\Money\Money;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Support\Facades\DB;
+use Selli\Commerce\Calculation\Adjustment;
 use Selli\Commerce\Calculation\CalculationLine;
 use Selli\Commerce\Cart\CartManager;
 use Selli\Commerce\Cart\Models\Cart;
@@ -110,6 +111,19 @@ final class PlaceOrder
             $order->number = $this->numbers->generate($cart->tenant_id);
             $order->state = new Pending($order);
             $order->save();
+
+            // Freeze the cart-level adjustments (coupons, promotions, gift
+            // cards, fees) onto the order so listeners can record their usage
+            // and the order keeps an explainable breakdown.
+            $adjustments = array_map(
+                static fn (Adjustment $adjustment): array => $adjustment->toArray(),
+                $calculation->adjustments(),
+            );
+
+            if ($adjustments !== []) {
+                $order->metadata = array_merge($order->metadata ?? [], ['_adjustments' => $adjustments]);
+                $order->save();
+            }
 
             foreach ($calculation->lines() as $line) {
                 $this->persistLine($order, $line);

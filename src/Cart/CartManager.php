@@ -12,6 +12,8 @@ use Selli\Commerce\Calculation\Calculation;
 use Selli\Commerce\Cart\Models\Cart;
 use Selli\Commerce\Cart\Models\CartItem;
 use Selli\Commerce\Contracts\CartRepository;
+use Selli\Commerce\Contracts\CouponValidator;
+use Selli\Commerce\Contracts\GiftCardValidator;
 use Selli\Commerce\Contracts\PriceResolver;
 use Selli\Commerce\Contracts\Purchasable;
 use Selli\Commerce\Contracts\PurchasableResolver;
@@ -23,9 +25,12 @@ use Selli\Commerce\Events\Cart\CartMerged;
 use Selli\Commerce\Events\Cart\ItemAddedToCart;
 use Selli\Commerce\Events\Cart\ItemRemovedFromCart;
 use Selli\Commerce\Events\Cart\ItemUpdatedInCart;
+use Selli\Commerce\Events\Pricing\CouponApplied;
+use Selli\Commerce\Events\Pricing\CouponRejected;
 use Selli\Commerce\Exceptions\CartItemMismatchException;
 use Selli\Commerce\Exceptions\CartNotFoundException;
 use Selli\Commerce\Exceptions\CartNotMutableException;
+use Selli\Commerce\Exceptions\CommerceException;
 use Selli\Commerce\Exceptions\CurrencyMismatchException;
 use Selli\Commerce\Exceptions\InvalidQuantityException;
 use Selli\Commerce\Exceptions\ProductNotAvailableException;
@@ -44,6 +49,8 @@ final class CartManager
         private readonly PurchasableResolver $purchasables,
         private readonly CalculationBuilder $calculations,
         private readonly Dispatcher $events,
+        private readonly CouponValidator $couponValidator,
+        private readonly GiftCardValidator $giftCardValidator,
     ) {}
 
     public function find(string $id): ?Cart
@@ -318,6 +325,126 @@ final class CartManager
         });
 
         return $this->calculate($cart);
+    }
+
+    /**
+     * Validate and apply a coupon code to the cart. Emits CouponApplied on
+     * success, CouponRejected (and rethrows the typed exception) on failure.
+     */
+    public function applyCoupon(Cart $cart, string $code): void
+    {
+        $this->assertMutable($cart);
+
+        try {
+            $this->couponValidator->validate($code, [
+                'currency' => $cart->currency,
+                'customer' => ['type' => $cart->owner_type, 'id' => $cart->owner_id],
+                'tenant_id' => $cart->tenant_id,
+                'subtotal' => $this->calculate($cart)->itemsSubtotal(),
+            ]);
+        } catch (CommerceException $e) {
+            $this->events->dispatch(new CouponRejected($cart, $code, $e->getMessage()));
+
+            throw $e;
+        }
+
+        $this->storeCode($cart, 'coupons', $code);
+        $this->events->dispatch(new CouponApplied($cart, $code));
+    }
+
+    public function removeCoupon(Cart $cart, string $code): void
+    {
+        $this->removeCode($cart, 'coupons', $code);
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function coupons(Cart $cart): array
+    {
+        return $this->readCodes($cart, 'coupons');
+    }
+
+    /**
+     * Validate and apply a gift card code to the cart as a tender.
+     */
+    public function applyGiftCard(Cart $cart, string $code): void
+    {
+        $this->assertMutable($cart);
+
+        $this->giftCardValidator->validate($code, [
+            'currency' => $cart->currency,
+            'tenant_id' => $cart->tenant_id,
+        ]);
+
+        $this->storeCode($cart, 'gift_cards', $code);
+    }
+
+    public function removeGiftCard(Cart $cart, string $code): void
+    {
+        $this->removeCode($cart, 'gift_cards', $code);
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function giftCards(Cart $cart): array
+    {
+        return $this->readCodes($cart, 'gift_cards');
+    }
+
+    private function storeCode(Cart $cart, string $key, string $code): void
+    {
+        DB::transaction(function () use ($cart, $key, $code): void {
+            $this->lockActiveCart($cart);
+
+            $list = $this->readCodes($cart, $key);
+
+            if (! in_array($code, $list, true)) {
+                $list[] = $code;
+            }
+
+            $this->writeCodes($cart, $key, $list);
+            $this->touch($cart);
+        });
+    }
+
+    private function removeCode(Cart $cart, string $key, string $code): void
+    {
+        $this->assertMutable($cart);
+
+        DB::transaction(function () use ($cart, $key, $code): void {
+            $this->lockActiveCart($cart);
+
+            $list = array_values(array_filter(
+                $this->readCodes($cart, $key),
+                static fn (string $existing): bool => $existing !== $code,
+            ));
+
+            $this->writeCodes($cart, $key, $list);
+            $this->touch($cart);
+        });
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function readCodes(Cart $cart, string $key): array
+    {
+        $metadata = $cart->metadata ?? [];
+        $list = $metadata[$key] ?? [];
+
+        return is_array($list) ? array_values(array_filter($list, 'is_string')) : [];
+    }
+
+    /**
+     * @param  list<string>  $codes
+     */
+    private function writeCodes(Cart $cart, string $key, array $codes): void
+    {
+        $metadata = $cart->metadata ?? [];
+        $metadata[$key] = $codes;
+        $cart->metadata = $metadata;
     }
 
     /**

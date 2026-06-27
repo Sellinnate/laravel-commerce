@@ -63,6 +63,17 @@
       ]
     },
     {
+      "title": "Modules",
+      "icon": "boxes",
+      "children": [
+        { "title": "Pricing overview", "path": "/modules/pricing/overview", "icon": "tag" },
+        { "title": "Price books", "path": "/modules/pricing/price-books", "icon": "book" },
+        { "title": "Coupons", "path": "/modules/pricing/coupons", "icon": "ticket" },
+        { "title": "Promotions", "path": "/modules/pricing/promotions", "icon": "percent" },
+        { "title": "Gift cards", "path": "/modules/pricing/gift-cards", "icon": "gift" }
+      ]
+    },
+    {
       "title": "Guides",
       "icon": "compass",
       "children": [
