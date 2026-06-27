@@ -24,10 +24,12 @@ use Selli\Commerce\Events\Cart\ItemAddedToCart;
 use Selli\Commerce\Events\Cart\ItemRemovedFromCart;
 use Selli\Commerce\Events\Cart\ItemUpdatedInCart;
 use Selli\Commerce\Exceptions\CartItemMismatchException;
+use Selli\Commerce\Exceptions\CartNotFoundException;
 use Selli\Commerce\Exceptions\CartNotMutableException;
 use Selli\Commerce\Exceptions\CurrencyMismatchException;
 use Selli\Commerce\Exceptions\InvalidQuantityException;
 use Selli\Commerce\Exceptions\ProductNotAvailableException;
+use Selli\Commerce\Order\Actions\PlaceOrder;
 
 /**
  * The application service that orchestrates every cart operation: add, update,
@@ -102,41 +104,47 @@ final class CartManager
             throw CurrencyMismatchException::between($cart->currency, $resolvedCurrency);
         }
 
-        $existing = $this->idempotentMatch($cart, $purchasable, $options);
+        return DB::transaction(function () use ($cart, $purchasable, $quantity, $options, $metadata, $unitPrice): CartItem {
+            $this->lockActiveCart($cart);
+            $cart->load('items');
 
-        if ($existing !== null) {
-            $newQuantity = $existing->quantity + $quantity;
+            $existing = $this->idempotentMatch($cart, $purchasable, $options);
 
-            if (! $purchasable->isAvailable($newQuantity)) {
-                throw ProductNotAvailableException::for($purchasable->getName(), $newQuantity);
+            if ($existing !== null) {
+                $newQuantity = $existing->quantity + $quantity;
+
+                if (! $purchasable->isAvailable($newQuantity)) {
+                    throw ProductNotAvailableException::for($purchasable->getName(), $newQuantity);
+                }
+
+                $existing->quantity = $newQuantity;
+                $existing->unit_price = $unitPrice;
+                $existing->save();
+
+                $cart->load('items');
+                $this->touch($cart);
+                $this->events->dispatch(new ItemUpdatedInCart($cart, $existing));
+
+                return $existing;
             }
 
-            $existing->quantity = $newQuantity;
-            $existing->unit_price = $unitPrice;
-            $existing->save();
+            /** @var CartItem $item */
+            $item = $cart->items()->create([
+                'purchasable_type' => $purchasable->getPurchasableType(),
+                'purchasable_id' => $purchasable->getPurchasableId(),
+                'name' => $purchasable->getName(),
+                'quantity' => $quantity,
+                'unit_price' => $unitPrice,
+                'options' => $options,
+                'metadata' => $metadata,
+            ]);
 
+            $cart->load('items');
             $this->touch($cart);
-            $this->events->dispatch(new ItemUpdatedInCart($cart, $existing));
+            $this->events->dispatch(new ItemAddedToCart($cart, $item));
 
-            return $existing;
-        }
-
-        /** @var CartItem $item */
-        $item = $cart->items()->create([
-            'purchasable_type' => $purchasable->getPurchasableType(),
-            'purchasable_id' => $purchasable->getPurchasableId(),
-            'name' => $purchasable->getName(),
-            'quantity' => $quantity,
-            'unit_price' => $unitPrice,
-            'options' => $options,
-            'metadata' => $metadata,
-        ]);
-
-        $cart->load('items');
-        $this->touch($cart);
-        $this->events->dispatch(new ItemAddedToCart($cart, $item));
-
-        return $item;
+            return $item;
+        });
     }
 
     public function setQuantity(Cart $cart, CartItem $item, int $quantity): CartItem
@@ -151,13 +159,17 @@ final class CartManager
             throw ProductNotAvailableException::for($item->name, $quantity);
         }
 
-        $item->quantity = $quantity;
-        $item->save();
+        return DB::transaction(function () use ($cart, $item, $quantity): CartItem {
+            $this->lockActiveCart($cart);
 
-        $this->touch($cart);
-        $this->events->dispatch(new ItemUpdatedInCart($cart, $item));
+            $item->quantity = $quantity;
+            $item->save();
 
-        return $item;
+            $this->touch($cart);
+            $this->events->dispatch(new ItemUpdatedInCart($cart, $item));
+
+            return $item;
+        });
     }
 
     public function remove(Cart $cart, CartItem $item): void
@@ -165,17 +177,29 @@ final class CartManager
         $this->assertMutable($cart);
         $this->assertBelongsToCart($cart, $item);
 
-        $item->delete();
-        $cart->load('items');
+        DB::transaction(function () use ($cart, $item): void {
+            $this->lockActiveCart($cart);
 
-        $this->touch($cart);
-        $this->events->dispatch(new ItemRemovedFromCart($cart, $item));
+            $item->delete();
+            $cart->load('items');
+
+            $this->touch($cart);
+            $this->events->dispatch(new ItemRemovedFromCart($cart, $item));
+        });
     }
 
     public function clear(Cart $cart): void
     {
         $this->assertMutable($cart);
 
+        DB::transaction(function () use ($cart): void {
+            $this->lockActiveCart($cart);
+            $this->clearItems($cart);
+        });
+    }
+
+    private function clearItems(Cart $cart): void
+    {
         $cart->items()->delete();
         $cart->load('items');
 
@@ -205,6 +229,11 @@ final class CartManager
         // The whole merge is atomic: a stock violation on any line rolls the
         // entire operation back, so login/retry flows never leave a half-merge.
         return DB::transaction(function () use ($source, $target, $strategy): Cart {
+            $this->lockActiveCart($source);
+            $this->lockActiveCart($target);
+            $source->load('items');
+            $target->load('items');
+
             foreach ($source->items as $sourceItem) {
                 $match = $this->matchLine($target, $sourceItem->purchasable_type, $sourceItem->purchasable_id, $sourceItem->options ?? []);
 
@@ -354,6 +383,30 @@ final class CartManager
         if (! $cart->isMutable()) {
             throw CartNotMutableException::inStatus($cart->status);
         }
+    }
+
+    /**
+     * Acquire a row lock on the cart and authoritatively re-check that it is
+     * still mutable. Held until the surrounding transaction commits, this
+     * serialises cart writes against {@see PlaceOrder},
+     * so no line can be added to a cart while it is being converted.
+     */
+    private function lockActiveCart(Cart $cart): void
+    {
+        $locked = Cart::withoutTenantScope()
+            ->whereKey($cart->id)
+            ->lockForUpdate()
+            ->first();
+
+        if ($locked === null) {
+            throw CartNotFoundException::forMutation($cart->id);
+        }
+
+        if (! $locked->isMutable()) {
+            throw CartNotMutableException::inStatus($locked->status);
+        }
+
+        $cart->status = $locked->status;
     }
 
     private function assertBelongsToCart(Cart $cart, CartItem $item): void

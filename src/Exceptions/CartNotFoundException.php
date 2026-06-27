@@ -10,4 +10,9 @@ final class CartNotFoundException extends CommerceException
     {
         return new self("Cart [{$cartId}] no longer exists and cannot be placed.");
     }
+
+    public static function forMutation(string $cartId): self
+    {
+        return new self("Cart [{$cartId}] no longer exists and cannot be modified.");
+    }
 }

@@ -21,7 +21,11 @@ trait BelongsToTenant
         static::addGlobalScope(new TenantScope);
 
         static::creating(function (Model $model): void {
-            if ($model->getAttribute('tenant_id') === null) {
+            // Only auto-stamp when tenant_id was never provided. An explicit
+            // value (including an explicit null, e.g. a guest cart's order or
+            // an audit row carrying its subject's tenant) is authoritative and
+            // must never be replaced by the ambient context.
+            if (! array_key_exists('tenant_id', $model->getAttributes())) {
                 $tenantId = app(TenantContext::class)->currentTenantId();
 
                 if ($tenantId !== null) {

@@ -3,9 +3,11 @@
 declare(strict_types=1);
 
 use Selli\Commerce\Cart\CartManager;
+use Selli\Commerce\Cart\Models\Cart;
 use Selli\Commerce\Contracts\CartRepository;
 use Selli\Commerce\Enums\MergeStrategy;
 use Selli\Commerce\Exceptions\CartItemMismatchException;
+use Selli\Commerce\Exceptions\CartNotFoundException;
 use Selli\Commerce\Exceptions\ProductNotAvailableException;
 use Selli\Commerce\Tests\Fixtures\Product;
 
@@ -58,6 +60,15 @@ it('rejects a merge that would exceed available stock and rolls back', function 
     expect($guest->fresh()->status->value)->toBe('active')
         ->and($user->fresh()->items->first()->quantity)->toBe(2);
 });
+
+it('refuses to add to a cart whose row no longer exists', function (): void {
+    $product = Product::create(['name' => 'Widget', 'price_cents' => 1000]);
+    $cart = $this->carts->create('EUR');
+
+    Cart::withoutTenantScope()->whereKey($cart->id)->delete();
+
+    $this->carts->add($cart, $product, 1);
+})->throws(CartNotFoundException::class);
 
 it('throws for an unsupported cart driver', function (): void {
     config()->set('commerce.cart.driver', 'session');
