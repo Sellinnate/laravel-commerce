@@ -223,7 +223,7 @@ final class RecordPricingUsage
     {
         // Idempotent per order+promotion (replay-safe) via the audit trail when
         // domain-event recording is on.
-        $alreadyEmitted = DomainEvent::query()
+        $alreadyEmitted = DomainEvent::withoutTenantScope()
             ->where('name', 'PromotionApplied')
             ->where('subject_id', $order->id)
             ->where('payload->promotion_id', $promotionId)
