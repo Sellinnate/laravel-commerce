@@ -15,4 +15,9 @@ final class CouponUsageLimitReachedException extends CommerceException
     {
         return new self("Coupon [{$code}] has reached its per-customer usage limit.");
     }
+
+    public static function requiresIdentification(string $code): self
+    {
+        return new self("Coupon [{$code}] is limited per customer and requires an identified customer.");
+    }
 }

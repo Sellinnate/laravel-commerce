@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Selli\Commerce\Cart;
 
+use Brick\Money\Money;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Config;
@@ -170,14 +171,22 @@ final class CartManager
             throw ProductNotAvailableException::for($item->name, $quantity);
         }
 
-        return DB::transaction(function () use ($cart, $item, $quantity): CartItem {
+        return DB::transaction(function () use ($cart, $item, $quantity, $purchasable): CartItem {
             $this->lockActiveCart($cart);
             $cart->load('items');
 
-            $this->assertCartQuantityAvailable($cart, null, $item->purchasable_type, $item->purchasable_id, $item->name, $quantity, $item->id);
+            $this->assertCartQuantityAvailable($cart, $purchasable, $item->purchasable_type, $item->purchasable_id, $item->name, $quantity, $item->id);
 
             $item->quantity = $quantity;
+
+            // Re-resolve the price for the new quantity so crossing a price-book
+            // quantity tier updates the unit price immediately.
+            if ($purchasable !== null) {
+                $item->unit_price = $this->prices->resolve($purchasable, $cart->currency, $this->context($cart, $quantity));
+            }
+
             $item->save();
+            $cart->load('items');
 
             $this->touch($cart);
             $this->events->dispatch(new ItemUpdatedInCart($cart, $item));
@@ -259,7 +268,7 @@ final class CartManager
                         'purchasable_id' => $sourceItem->purchasable_id,
                         'name' => $sourceItem->name,
                         'quantity' => $sourceItem->quantity,
-                        'unit_price' => $sourceItem->unit_price,
+                        'unit_price' => $this->mergedUnitPrice($target, $sourceItem, $sourceItem->quantity),
                         'options' => $sourceItem->options ?? [],
                         'metadata' => $sourceItem->metadata ?? [],
                     ]);
@@ -281,6 +290,7 @@ final class CartManager
                 $this->assertAvailableForMerge($sourceItem, $newQuantity);
 
                 $match->quantity = $newQuantity;
+                $match->unit_price = $this->mergedUnitPrice($target, $match, $newQuantity);
                 $match->save();
             }
 
@@ -623,6 +633,22 @@ final class CartManager
         if (! $purchasable->isAvailable($total)) {
             throw ProductNotAvailableException::for($name, $total);
         }
+    }
+
+    /**
+     * Re-resolve the unit price for a merged line at the given quantity so
+     * price-book quantity tiers apply. Falls back to the source/existing price
+     * when the catalogue row can no longer be resolved.
+     */
+    private function mergedUnitPrice(Cart $target, CartItem $item, int $quantity): Money
+    {
+        $purchasable = $this->purchasables->resolve($item->purchasable_type, $item->purchasable_id);
+
+        if ($purchasable === null) {
+            return $item->unit_price;
+        }
+
+        return $this->prices->resolve($purchasable, $target->currency, $this->context($target, $quantity));
     }
 
     /**

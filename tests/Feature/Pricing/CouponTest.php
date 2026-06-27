@@ -136,6 +136,13 @@ it('rejects a coupon that reached its per-customer limit', function (): void {
     $this->carts->applyCoupon($cart, 'PERCUST');
 })->throws(CouponUsageLimitReachedException::class);
 
+it('rejects a per-customer-limited coupon on a guest (unidentified) cart', function (): void {
+    Coupon::factory()->create(['code' => 'PERCUST', 'per_customer_limit' => 1]);
+    [$cart] = cartWith($this->carts, 1000); // guest cart, no owner
+
+    $this->carts->applyCoupon($cart, 'PERCUST');
+})->throws(CouponUsageLimitReachedException::class);
+
 it('skips a coupon that became invalid before calculation', function (): void {
     $coupon = Coupon::factory()->create(['code' => 'SAVE10', 'type' => CouponType::Percentage, 'value' => 10]);
     [$cart] = cartWith($this->carts, 1000);

@@ -73,14 +73,19 @@ final class DatabaseCouponValidator implements CouponValidator
         }
 
         $customer = $context['customer'] ?? null;
+        $customerId = is_array($customer) ? ($customer['id'] ?? null) : null;
+        $customerType = is_array($customer) ? ($customer['type'] ?? null) : null;
 
-        if (! is_array($customer) || ($customer['id'] ?? null) === null) {
-            return;
+        // A per-customer limit cannot be enforced for an anonymous guest, so a
+        // coupon that declares one requires an identified customer rather than
+        // being granted unlimited guest redemptions.
+        if ($customerId === null) {
+            throw CouponUsageLimitReachedException::requiresIdentification($code);
         }
 
         $count = $coupon->redemptions()
-            ->where('customer_type', $customer['type'] ?? null)
-            ->where('customer_id', $customer['id'])
+            ->where('customer_type', $customerType)
+            ->where('customer_id', $customerId)
             ->count();
 
         if ($count >= $coupon->per_customer_limit) {

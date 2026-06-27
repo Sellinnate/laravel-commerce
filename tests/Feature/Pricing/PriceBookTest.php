@@ -115,6 +115,48 @@ it('re-prices to a quantity tier when idempotent adds cross the threshold', func
         ->and($carts->calculate($cart)->grandTotal()->getMinorAmount()->toInt())->toBe(7000);
 });
 
+it('re-prices to a quantity tier when setQuantity crosses the threshold', function (): void {
+    $product = Product::create(['name' => 'Widget', 'price_cents' => 1000]);
+    $book = priceBookWith($product->id, 1000, [], 1);
+    $book->prices()->create([
+        'purchasable_type' => 'product',
+        'purchasable_id' => $product->id,
+        'amount' => 700,
+        'currency' => 'EUR',
+        'min_quantity' => 10,
+    ]);
+
+    $carts = app(CartManager::class);
+    $cart = $carts->create('EUR');
+    $item = $carts->add($cart, $product, 1);
+    $carts->setQuantity($cart, $item, 10);
+
+    expect($carts->calculate($cart)->grandTotal()->getMinorAmount()->toInt())->toBe(7000);
+});
+
+it('re-prices to a quantity tier when a merge sums across the threshold', function (): void {
+    $product = Product::create(['name' => 'Widget', 'price_cents' => 1000]);
+    $book = priceBookWith($product->id, 1000, [], 1);
+    $book->prices()->create([
+        'purchasable_type' => 'product',
+        'purchasable_id' => $product->id,
+        'amount' => 700,
+        'currency' => 'EUR',
+        'min_quantity' => 10,
+    ]);
+
+    $carts = app(CartManager::class);
+    $guest = $carts->create('EUR');
+    $carts->add($guest, $product, 6);
+    $user = $carts->create('EUR');
+    $carts->add($user, $product, 4);
+
+    $carts->merge($guest, $user);
+
+    // Combined 10 → tier price 700 each.
+    expect($carts->calculate($user)->grandTotal()->getMinorAmount()->toInt())->toBe(7000);
+});
+
 it('uses a segment-specific price when the cart carries a segment', function (): void {
     $product = Product::create(['name' => 'Widget', 'price_cents' => 1000]);
     priceBookWith($product->id, 800);
