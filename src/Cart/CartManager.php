@@ -113,9 +113,7 @@ final class CartManager
             if ($existing !== null) {
                 $newQuantity = $existing->quantity + $quantity;
 
-                if (! $purchasable->isAvailable($newQuantity)) {
-                    throw ProductNotAvailableException::for($purchasable->getName(), $newQuantity);
-                }
+                $this->assertCartQuantityAvailable($cart, $purchasable, $purchasable->getPurchasableType(), $purchasable->getPurchasableId(), $purchasable->getName(), $newQuantity, $existing->id);
 
                 $existing->quantity = $newQuantity;
                 $existing->unit_price = $unitPrice;
@@ -127,6 +125,8 @@ final class CartManager
 
                 return $existing;
             }
+
+            $this->assertCartQuantityAvailable($cart, $purchasable, $purchasable->getPurchasableType(), $purchasable->getPurchasableId(), $purchasable->getName(), $quantity, null);
 
             /** @var CartItem $item */
             $item = $cart->items()->create([
@@ -161,6 +161,9 @@ final class CartManager
 
         return DB::transaction(function () use ($cart, $item, $quantity): CartItem {
             $this->lockActiveCart($cart);
+            $cart->load('items');
+
+            $this->assertCartQuantityAvailable($cart, null, $item->purchasable_type, $item->purchasable_id, $item->name, $quantity, $item->id);
 
             $item->quantity = $quantity;
             $item->save();
@@ -427,6 +430,39 @@ final class CartManager
     {
         if ((string) $item->cart_id !== (string) $cart->id) {
             throw CartItemMismatchException::notInCart($item->id, $cart->id);
+        }
+    }
+
+    /**
+     * Assert, under the cart lock, that the live purchasable can satisfy the
+     * TOTAL quantity of that purchasable across the whole cart once the target
+     * line is set to $lineQuantity (or added, when $excludeItemId is null).
+     * This catches both post-lock stock drops and quantity split across
+     * multiple option-lines of the same purchasable. Unresolvable purchasables
+     * (catalogue removed) are skipped.
+     */
+    private function assertCartQuantityAvailable(Cart $cart, ?Purchasable $purchasable, string $type, string $id, string $name, int $lineQuantity, ?string $excludeItemId): void
+    {
+        $purchasable ??= $this->purchasables->resolve($type, $id);
+
+        if ($purchasable === null) {
+            return;
+        }
+
+        $total = $lineQuantity;
+
+        foreach ($cart->items as $item) {
+            if ($excludeItemId !== null && $item->id === $excludeItemId) {
+                continue;
+            }
+
+            if ($item->purchasable_type === $type && (string) $item->purchasable_id === (string) $id) {
+                $total += $item->quantity;
+            }
+        }
+
+        if (! $purchasable->isAvailable($total)) {
+            throw ProductNotAvailableException::for($name, $total);
         }
     }
 

@@ -61,6 +61,16 @@ it('rejects a merge that would exceed available stock and rolls back', function 
         ->and($user->fresh()->items->first()->quantity)->toBe(2);
 });
 
+it('rejects total quantity across option-lines exceeding stock', function (): void {
+    $product = Product::create(['name' => 'Shirt', 'price_cents' => 2000, 'stock' => 3]);
+    $cart = $this->carts->create('EUR');
+
+    $this->carts->add($cart, $product, 2, ['size' => 'L']);
+
+    expect(fn () => $this->carts->add($cart, $product, 2, ['size' => 'M']))
+        ->toThrow(ProductNotAvailableException::class);
+});
+
 it('refuses to add to a cart whose row no longer exists', function (): void {
     $product = Product::create(['name' => 'Widget', 'price_cents' => 1000]);
     $cart = $this->carts->create('EUR');
