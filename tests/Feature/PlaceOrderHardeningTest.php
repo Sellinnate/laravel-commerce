@@ -9,6 +9,8 @@ use Selli\Commerce\Exceptions\CartNotMutableException;
 use Selli\Commerce\Exceptions\ProductNotAvailableException;
 use Selli\Commerce\Order\Actions\PlaceOrder;
 use Selli\Commerce\Order\Models\Order;
+use Selli\Commerce\Pricing\Models\GiftCard;
+use Selli\Commerce\Pricing\Models\GiftCardTransaction;
 use Selli\Commerce\Tenancy\CallbackTenantContext;
 use Selli\Commerce\Tests\Fixtures\Product;
 
@@ -70,6 +72,27 @@ it('aggregates quantity across option-lines when validating stock at placement',
 
     $this->place->handle($cart);
 })->throws(ProductNotAvailableException::class);
+
+it('strips caller-supplied _adjustments so settlement cannot be spoofed', function (): void {
+    $giftCard = GiftCard::factory()->create(['code' => 'VICTIM', 'initial_amount' => 5000, 'balance' => 5000]);
+
+    $product = Product::create(['name' => 'Widget', 'price_cents' => 1000]);
+    $cart = $this->carts->create('EUR');
+    $this->carts->add($cart, $product, 1);
+
+    // The cart has no real gift card; the caller tries to inject a redemption.
+    $order = $this->place->handle($cart, ['metadata' => ['_adjustments' => [[
+        'source' => 'gift_card',
+        'amount' => -5000,
+        'currency' => 'EUR',
+        'data' => ['gift_card_id' => $giftCard->id],
+    ]]]]);
+
+    // The injected adjustments are stripped; the victim card is untouched.
+    expect($order->fresh()->metadata['_adjustments'] ?? null)->toBeNull()
+        ->and($giftCard->fresh()->balance)->toBe(5000)
+        ->and(GiftCardTransaction::query()->where('gift_card_id', $giftCard->id)->count())->toBe(0);
+});
 
 it('re-validates stock at place-order time', function (): void {
     $product = Product::create(['name' => 'Widget', 'price_cents' => 1000, 'stock' => 5]);

@@ -7,6 +7,7 @@ namespace Selli\Commerce\Order\Actions;
 use Brick\Money\Money;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Support\Facades\DB;
+use Selli\Commerce\Calculation\Adjustment;
 use Selli\Commerce\Calculation\CalculationLine;
 use Selli\Commerce\Cart\CartManager;
 use Selli\Commerce\Cart\Models\Cart;
@@ -76,6 +77,10 @@ final class PlaceOrder
                 throw CartNotMutableException::expired($locked->id);
             }
 
+            // Take metadata (applied coupons / gift cards) from the locked row,
+            // not the possibly-stale in-memory cart, so the totals reflect what
+            // is actually persisted.
+            $cart->metadata = $locked->metadata;
             $cart->load('items');
 
             // Re-check emptiness under the lock: a concurrent clear() could
@@ -109,6 +114,26 @@ final class PlaceOrder
 
             $order->number = $this->numbers->generate($cart->tenant_id);
             $order->state = new Pending($order);
+            $order->save();
+
+            // Freeze the cart-level adjustments (coupons, promotions, gift
+            // cards, fees) onto the order so listeners can record their usage
+            // and the order keeps an explainable breakdown. `_adjustments` is a
+            // server-owned key: any caller-supplied value is stripped so a
+            // checkout cannot inject redemptions against other records.
+            $adjustments = array_map(
+                static fn (Adjustment $adjustment): array => $adjustment->toArray(),
+                $calculation->adjustments(),
+            );
+
+            $metadata = $order->metadata ?? [];
+            unset($metadata['_adjustments']);
+
+            if ($adjustments !== []) {
+                $metadata['_adjustments'] = $adjustments;
+            }
+
+            $order->metadata = $metadata;
             $order->save();
 
             foreach ($calculation->lines() as $line) {

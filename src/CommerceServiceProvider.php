@@ -14,24 +14,44 @@ use InvalidArgumentException;
 use Selli\Commerce\Audit\Contracts\Recordable;
 use Selli\Commerce\Audit\Models\DomainEvent;
 use Selli\Commerce\Audit\RecordDomainEvents;
+use Selli\Commerce\Calculation\Calculators\GrandTotalCalculator;
 use Selli\Commerce\Calculation\Pipeline;
 use Selli\Commerce\Cart\Models\Cart;
 use Selli\Commerce\Cart\Models\CartItem;
 use Selli\Commerce\Cart\Repositories\DatabaseCartRepository;
 use Selli\Commerce\Contracts\Calculator;
 use Selli\Commerce\Contracts\CartRepository;
+use Selli\Commerce\Contracts\CouponValidator;
+use Selli\Commerce\Contracts\GiftCardValidator;
 use Selli\Commerce\Contracts\OrderNumberGenerator;
 use Selli\Commerce\Contracts\OrderRepository;
 use Selli\Commerce\Contracts\PriceResolver;
 use Selli\Commerce\Contracts\PurchasableResolver;
 use Selli\Commerce\Contracts\RoundingStrategy;
 use Selli\Commerce\Contracts\TenantContext;
+use Selli\Commerce\Events\Order\OrderPlaced;
 use Selli\Commerce\Order\Models\Order;
 use Selli\Commerce\Order\Models\OrderLine;
 use Selli\Commerce\Order\Models\OrderStateTransition;
 use Selli\Commerce\Order\Policies\OrderPolicy;
 use Selli\Commerce\Order\Repositories\EloquentOrderRepository;
 use Selli\Commerce\Order\Support\SequentialOrderNumberGenerator;
+use Selli\Commerce\Pricing\Calculators\CouponDiscountCalculator;
+use Selli\Commerce\Pricing\Calculators\GiftCardCalculator;
+use Selli\Commerce\Pricing\Calculators\PromotionCalculator;
+use Selli\Commerce\Pricing\DatabaseCouponValidator;
+use Selli\Commerce\Pricing\DatabaseGiftCardValidator;
+use Selli\Commerce\Pricing\Listeners\RecordPricingUsage;
+use Selli\Commerce\Pricing\Models\Coupon;
+use Selli\Commerce\Pricing\Models\CouponRedemption;
+use Selli\Commerce\Pricing\Models\GiftCard;
+use Selli\Commerce\Pricing\Models\GiftCardTransaction;
+use Selli\Commerce\Pricing\Models\Price;
+use Selli\Commerce\Pricing\Models\PriceBook;
+use Selli\Commerce\Pricing\Models\Promotion;
+use Selli\Commerce\Pricing\NullCouponValidator;
+use Selli\Commerce\Pricing\NullGiftCardValidator;
+use Selli\Commerce\Pricing\PriceBookResolver;
 use Selli\Commerce\Support\DefaultPriceResolver;
 use Selli\Commerce\Support\DefaultRoundingStrategy;
 use Selli\Commerce\Support\EloquentPurchasableResolver;
@@ -72,6 +92,13 @@ final class CommerceServiceProvider extends PackageServiceProvider
             'commerce.order_line' => OrderLine::class,
             'commerce.order_state_transition' => OrderStateTransition::class,
             'commerce.domain_event' => DomainEvent::class,
+            'commerce.price_book' => PriceBook::class,
+            'commerce.price' => Price::class,
+            'commerce.coupon' => Coupon::class,
+            'commerce.coupon_redemption' => CouponRedemption::class,
+            'commerce.promotion' => Promotion::class,
+            'commerce.gift_card' => GiftCard::class,
+            'commerce.gift_card_transaction' => GiftCardTransaction::class,
         ]);
 
         Gate::policy(Order::class, OrderPolicy::class);
@@ -83,6 +110,10 @@ final class CommerceServiceProvider extends PackageServiceProvider
                 $this->app->make(RecordDomainEvents::class)->handle($event);
             }
         });
+
+        if ($this->pricingEnabled()) {
+            Event::listen(OrderPlaced::class, [RecordPricingUsage::class, 'handle']);
+        }
     }
 
     private function bindTenantContext(): void
@@ -126,9 +157,49 @@ final class CommerceServiceProvider extends PackageServiceProvider
     private function bindContracts(): void
     {
         $this->bindContract(PurchasableResolver::class, EloquentPurchasableResolver::class);
-        $this->bindContract(PriceResolver::class, DefaultPriceResolver::class);
         $this->bindContract(OrderRepository::class, EloquentOrderRepository::class);
         $this->bindContract(OrderNumberGenerator::class, SequentialOrderNumberGenerator::class);
+
+        $this->app->bind(PriceResolver::class, function (): PriceResolver {
+            $override = $this->binding(PriceResolver::class);
+
+            if ($override !== null) {
+                /** @var PriceResolver */
+                return $this->app->make($override);
+            }
+
+            if ($this->pricingEnabled()) {
+                return new PriceBookResolver($this->app->make(DefaultPriceResolver::class));
+            }
+
+            return $this->app->make(DefaultPriceResolver::class);
+        });
+
+        $this->app->bind(CouponValidator::class, function (): CouponValidator {
+            $override = $this->binding(CouponValidator::class);
+
+            if ($override !== null) {
+                /** @var CouponValidator */
+                return $this->app->make($override);
+            }
+
+            return $this->pricingEnabled()
+                ? $this->app->make(DatabaseCouponValidator::class)
+                : $this->app->make(NullCouponValidator::class);
+        });
+
+        $this->app->bind(GiftCardValidator::class, function (): GiftCardValidator {
+            $override = $this->binding(GiftCardValidator::class);
+
+            if ($override !== null) {
+                /** @var GiftCardValidator */
+                return $this->app->make($override);
+            }
+
+            return $this->pricingEnabled()
+                ? $this->app->make(DatabaseGiftCardValidator::class)
+                : $this->app->make(NullGiftCardValidator::class);
+        });
 
         $this->app->bind(CartRepository::class, function (): CartRepository {
             $override = $this->binding(CartRepository::class);
@@ -156,8 +227,9 @@ final class CommerceServiceProvider extends PackageServiceProvider
             /** @var list<Calculator> $calculators */
             $calculators = [];
 
-            /** @var array<int, class-string> $classes */
-            $classes = (array) config('commerce.pipeline', []);
+            /** @var array<int, class-string> $configured */
+            $configured = (array) config('commerce.pipeline', []);
+            $classes = $configured !== [] ? $configured : $this->defaultPipeline();
 
             foreach ($classes as $class) {
                 /** @var Calculator $calculator */
@@ -167,6 +239,43 @@ final class CommerceServiceProvider extends PackageServiceProvider
 
             return new Pipeline($calculators);
         });
+    }
+
+    private function pricingEnabled(): bool
+    {
+        return Config::boolean('commerce.modules.pricing', true);
+    }
+
+    /**
+     * Auto-compose the pipeline from the enabled modules, ending with the
+     * mandatory GrandTotalCalculator.
+     *
+     * @return list<class-string<Calculator>>
+     */
+    private function defaultPipeline(): array
+    {
+        $classes = [];
+
+        if ($this->pricingEnabled()) {
+            $classes[] = PromotionCalculator::class;
+            $classes[] = CouponDiscountCalculator::class;
+        }
+
+        // The Tax module splices its TaxCalculator here (before gift cards).
+
+        if ($this->pricingEnabled()) {
+            $classes[] = GiftCardCalculator::class;
+        }
+
+        foreach ((array) config('commerce.pipeline_append', []) as $class) {
+            if (is_string($class) && is_a($class, Calculator::class, true)) {
+                $classes[] = $class;
+            }
+        }
+
+        $classes[] = GrandTotalCalculator::class;
+
+        return $classes;
     }
 
     /**

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Selli\Commerce\Cart;
 
+use Brick\Money\Money;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Config;
@@ -12,9 +13,12 @@ use Selli\Commerce\Calculation\Calculation;
 use Selli\Commerce\Cart\Models\Cart;
 use Selli\Commerce\Cart\Models\CartItem;
 use Selli\Commerce\Contracts\CartRepository;
+use Selli\Commerce\Contracts\CouponValidator;
+use Selli\Commerce\Contracts\GiftCardValidator;
 use Selli\Commerce\Contracts\PriceResolver;
 use Selli\Commerce\Contracts\Purchasable;
 use Selli\Commerce\Contracts\PurchasableResolver;
+use Selli\Commerce\Enums\AdjustmentType;
 use Selli\Commerce\Enums\CartStatus;
 use Selli\Commerce\Enums\MergeStrategy;
 use Selli\Commerce\Events\Cart\CartCleared;
@@ -23,9 +27,12 @@ use Selli\Commerce\Events\Cart\CartMerged;
 use Selli\Commerce\Events\Cart\ItemAddedToCart;
 use Selli\Commerce\Events\Cart\ItemRemovedFromCart;
 use Selli\Commerce\Events\Cart\ItemUpdatedInCart;
+use Selli\Commerce\Events\Pricing\CouponApplied;
+use Selli\Commerce\Events\Pricing\CouponRejected;
 use Selli\Commerce\Exceptions\CartItemMismatchException;
 use Selli\Commerce\Exceptions\CartNotFoundException;
 use Selli\Commerce\Exceptions\CartNotMutableException;
+use Selli\Commerce\Exceptions\CommerceException;
 use Selli\Commerce\Exceptions\CurrencyMismatchException;
 use Selli\Commerce\Exceptions\InvalidQuantityException;
 use Selli\Commerce\Exceptions\ProductNotAvailableException;
@@ -44,6 +51,8 @@ final class CartManager
         private readonly PurchasableResolver $purchasables,
         private readonly CalculationBuilder $calculations,
         private readonly Dispatcher $events,
+        private readonly CouponValidator $couponValidator,
+        private readonly GiftCardValidator $giftCardValidator,
     ) {}
 
     public function find(string $id): ?Cart
@@ -97,7 +106,7 @@ final class CartManager
             throw ProductNotAvailableException::for($purchasable->getName(), $quantity);
         }
 
-        $unitPrice = $this->prices->resolve($purchasable, $cart->currency, $this->context($cart));
+        $unitPrice = $this->prices->resolve($purchasable, $cart->currency, $this->context($cart, $quantity));
         $resolvedCurrency = $unitPrice->getCurrency()->getCurrencyCode();
 
         if ($resolvedCurrency !== $cart->currency) {
@@ -116,7 +125,10 @@ final class CartManager
                 $this->assertCartQuantityAvailable($cart, $purchasable, $purchasable->getPurchasableType(), $purchasable->getPurchasableId(), $purchasable->getName(), $newQuantity, $existing->id);
 
                 $existing->quantity = $newQuantity;
-                $existing->unit_price = $unitPrice;
+                // Re-resolve the price against the combined quantity so a
+                // quantity-tier price book reflects the merged line, not just
+                // this increment.
+                $existing->unit_price = $this->prices->resolve($purchasable, $cart->currency, $this->context($cart, $newQuantity));
                 $existing->save();
 
                 $cart->load('items');
@@ -159,14 +171,22 @@ final class CartManager
             throw ProductNotAvailableException::for($item->name, $quantity);
         }
 
-        return DB::transaction(function () use ($cart, $item, $quantity): CartItem {
+        return DB::transaction(function () use ($cart, $item, $quantity, $purchasable): CartItem {
             $this->lockActiveCart($cart);
             $cart->load('items');
 
-            $this->assertCartQuantityAvailable($cart, null, $item->purchasable_type, $item->purchasable_id, $item->name, $quantity, $item->id);
+            $this->assertCartQuantityAvailable($cart, $purchasable, $item->purchasable_type, $item->purchasable_id, $item->name, $quantity, $item->id);
 
             $item->quantity = $quantity;
+
+            // Re-resolve the price for the new quantity so crossing a price-book
+            // quantity tier updates the unit price immediately.
+            if ($purchasable !== null) {
+                $item->unit_price = $this->prices->resolve($purchasable, $cart->currency, $this->context($cart, $quantity));
+            }
+
             $item->save();
+            $cart->load('items');
 
             $this->touch($cart);
             $this->events->dispatch(new ItemUpdatedInCart($cart, $item));
@@ -248,7 +268,7 @@ final class CartManager
                         'purchasable_id' => $sourceItem->purchasable_id,
                         'name' => $sourceItem->name,
                         'quantity' => $sourceItem->quantity,
-                        'unit_price' => $sourceItem->unit_price,
+                        'unit_price' => $this->mergedUnitPrice($target, $sourceItem, $sourceItem->quantity),
                         'options' => $sourceItem->options ?? [],
                         'metadata' => $sourceItem->metadata ?? [],
                     ]);
@@ -270,8 +290,21 @@ final class CartManager
                 $this->assertAvailableForMerge($sourceItem, $newQuantity);
 
                 $match->quantity = $newQuantity;
+                $match->unit_price = $this->mergedUnitPrice($target, $match, $newQuantity);
                 $match->save();
             }
+
+            // Carry over applied coupon / gift-card codes so a guest cart's
+            // codes are not lost when it merges into the user cart at login.
+            foreach (['coupons', 'gift_cards'] as $key) {
+                $this->writeCodes($target, $key, array_values(array_unique(
+                    array_merge($this->readCodes($target, $key), $this->readCodes($source, $key)),
+                )));
+            }
+
+            // Carry the pricing segment so segment-specific prices survive the
+            // login merge (the target keeps its own segment if it has one).
+            $this->carryMetadataValue($source, $target, 'segment');
 
             $source->status = CartStatus::Merged;
             $source->save();
@@ -310,7 +343,7 @@ final class CartManager
                     continue;
                 }
 
-                $item->unit_price = $this->prices->resolve($purchasable, $cart->currency, $this->context($cart));
+                $item->unit_price = $this->prices->resolve($purchasable, $cart->currency, $this->context($cart, $item->quantity));
                 $item->save();
             }
 
@@ -318,6 +351,151 @@ final class CartManager
         });
 
         return $this->calculate($cart);
+    }
+
+    /**
+     * Validate and apply a coupon code to the cart. Emits CouponApplied on
+     * success, CouponRejected (and rethrows the typed exception) on failure.
+     */
+    public function applyCoupon(Cart $cart, string $code): void
+    {
+        $this->assertMutable($cart);
+
+        $calculation = $this->calculate($cart);
+
+        try {
+            $this->couponValidator->validate($code, [
+                'currency' => $cart->currency,
+                'customer' => ['type' => $cart->owner_type, 'id' => $cart->owner_id],
+                'tenant_id' => $cart->tenant_id,
+                // Validate the minimum against the same base the calculator uses
+                // (subtotal net of promotions), so a coupon accepted here is not
+                // silently skipped at calculation time.
+                'subtotal' => $calculation->itemsSubtotal()->plus($calculation->totalByType(AdjustmentType::Promotion)),
+            ]);
+        } catch (CommerceException $e) {
+            $this->events->dispatch(new CouponRejected($cart, $code, $e->getMessage()));
+
+            throw $e;
+        }
+
+        $this->storeCode($cart, 'coupons', $code);
+        $this->events->dispatch(new CouponApplied($cart, $code));
+    }
+
+    public function removeCoupon(Cart $cart, string $code): void
+    {
+        $this->removeCode($cart, 'coupons', $code);
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function coupons(Cart $cart): array
+    {
+        return $this->readCodes($cart, 'coupons');
+    }
+
+    /**
+     * Validate and apply a gift card code to the cart as a tender.
+     */
+    public function applyGiftCard(Cart $cart, string $code): void
+    {
+        $this->assertMutable($cart);
+
+        $this->giftCardValidator->validate($code, [
+            'currency' => $cart->currency,
+            'tenant_id' => $cart->tenant_id,
+        ]);
+
+        $this->storeCode($cart, 'gift_cards', $code);
+    }
+
+    public function removeGiftCard(Cart $cart, string $code): void
+    {
+        $this->removeCode($cart, 'gift_cards', $code);
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function giftCards(Cart $cart): array
+    {
+        return $this->readCodes($cart, 'gift_cards');
+    }
+
+    private function storeCode(Cart $cart, string $key, string $code): void
+    {
+        DB::transaction(function () use ($cart, $key, $code): void {
+            $this->lockActiveCart($cart);
+
+            $list = $this->readCodes($cart, $key);
+
+            if (! in_array($code, $list, true)) {
+                $list[] = $code;
+            }
+
+            $this->writeCodes($cart, $key, $list);
+            $this->touch($cart);
+        });
+    }
+
+    private function removeCode(Cart $cart, string $key, string $code): void
+    {
+        $this->assertMutable($cart);
+
+        DB::transaction(function () use ($cart, $key, $code): void {
+            $this->lockActiveCart($cart);
+
+            $list = array_values(array_filter(
+                $this->readCodes($cart, $key),
+                static fn (string $existing): bool => $existing !== $code,
+            ));
+
+            $this->writeCodes($cart, $key, $list);
+            $this->touch($cart);
+        });
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function readCodes(Cart $cart, string $key): array
+    {
+        $metadata = $cart->metadata ?? [];
+        $list = $metadata[$key] ?? [];
+
+        return is_array($list) ? array_values(array_filter($list, 'is_string')) : [];
+    }
+
+    /**
+     * @param  list<string>  $codes
+     */
+    private function writeCodes(Cart $cart, string $key, array $codes): void
+    {
+        $metadata = $cart->metadata ?? [];
+        $metadata[$key] = $codes;
+        $cart->metadata = $metadata;
+    }
+
+    /**
+     * Copy a metadata value from source to target on merge, unless the target
+     * already has its own value for that key.
+     */
+    private function carryMetadataValue(Cart $source, Cart $target, string $key): void
+    {
+        $targetMetadata = $target->metadata ?? [];
+
+        if (array_key_exists($key, $targetMetadata)) {
+            return;
+        }
+
+        $sourceMetadata = $source->metadata ?? [];
+
+        if (array_key_exists($key, $sourceMetadata)) {
+            $targetMetadata[$key] = $sourceMetadata[$key];
+            $target->metadata = $targetMetadata;
+        }
     }
 
     /**
@@ -375,15 +553,27 @@ final class CartManager
     }
 
     /**
+     * Build the price-resolution context. Quantity drives price-book quantity
+     * tiers; the segment (from cart metadata) drives segment-specific books.
+     *
      * @return array<string, mixed>
      */
-    private function context(Cart $cart): array
+    private function context(Cart $cart, int $quantity = 1): array
     {
-        return [
+        $context = [
             'tenant_id' => $cart->tenant_id,
             'customer' => ['type' => $cart->owner_type, 'id' => $cart->owner_id],
             'cart' => $cart,
+            'quantity' => $quantity,
         ];
+
+        $segment = ($cart->metadata ?? [])['segment'] ?? null;
+
+        if (is_string($segment) && $segment !== '') {
+            $context['segment'] = $segment;
+        }
+
+        return $context;
     }
 
     private function assertMutable(Cart $cart): void
@@ -424,6 +614,9 @@ final class CartManager
 
         $cart->status = $locked->status;
         $cart->expires_at = $locked->expires_at;
+        // Refresh metadata from the locked row so concurrent code-list updates
+        // (coupons / gift cards) are read-modify-written off the latest state.
+        $cart->metadata = $locked->metadata;
     }
 
     private function assertBelongsToCart(Cart $cart, CartItem $item): void
@@ -464,6 +657,22 @@ final class CartManager
         if (! $purchasable->isAvailable($total)) {
             throw ProductNotAvailableException::for($name, $total);
         }
+    }
+
+    /**
+     * Re-resolve the unit price for a merged line at the given quantity so
+     * price-book quantity tiers apply. Falls back to the source/existing price
+     * when the catalogue row can no longer be resolved.
+     */
+    private function mergedUnitPrice(Cart $target, CartItem $item, int $quantity): Money
+    {
+        $purchasable = $this->purchasables->resolve($item->purchasable_type, $item->purchasable_id);
+
+        if ($purchasable === null) {
+            return $item->unit_price;
+        }
+
+        return $this->prices->resolve($purchasable, $target->currency, $this->context($target, $quantity));
     }
 
     /**
