@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Brick\Money\Money;
 use Selli\Commerce\Audit\Models\DomainEvent;
 use Selli\Commerce\Cart\CartManager;
 use Selli\Commerce\Cart\Models\Cart;
@@ -11,6 +12,7 @@ use Selli\Commerce\Events\Order\OrderPlaced;
 use Selli\Commerce\Exceptions\GiftCardException;
 use Selli\Commerce\Exceptions\PricingModuleDisabledException;
 use Selli\Commerce\Order\Actions\PlaceOrder;
+use Selli\Commerce\Order\Models\Order;
 use Selli\Commerce\Pricing\Listeners\RecordPricingUsage;
 use Selli\Commerce\Pricing\Models\GiftCard;
 use Selli\Commerce\Pricing\Models\GiftCardTransaction;
@@ -100,6 +102,31 @@ it('does not double-debit a gift card when the placed event is replayed', functi
 
     expect($giftCard->fresh()->balance)->toBe(0)
         ->and(GiftCardTransaction::query()->where('gift_card_id', $giftCard->id)->count())->toBe(1);
+});
+
+it('reconciles the order total when a gift card cannot cover the frozen tender', function (): void {
+    $giftCard = GiftCard::factory()->create(['code' => 'GIFT', 'initial_amount' => 1000, 'balance' => 400]);
+
+    $order = Order::factory()->create([
+        'currency' => 'EUR',
+        'grand_total' => Money::ofMinor(2000, 'EUR'),
+        'metadata' => ['_adjustments' => [[
+            'type' => 'gift_card',
+            'label' => 'Gift card GIFT',
+            'amount' => -1000,
+            'currency' => 'EUR',
+            'source' => 'gift_card',
+            'affects_total' => true,
+            'data' => ['code' => 'GIFT', 'gift_card_id' => $giftCard->id],
+        ]]],
+    ]);
+
+    app(RecordPricingUsage::class)->handle(new OrderPlaced($order));
+
+    // Only 400 was really redeemed → the 600 shortfall is added back to the order.
+    expect($giftCard->fresh()->balance)->toBe(0)
+        ->and($order->fresh()->grand_total->getMinorAmount()->toInt())->toBe(2600)
+        ->and(GiftCardTransaction::query()->where('gift_card_id', $giftCard->id)->where('amount', 400)->exists())->toBeTrue();
 });
 
 it('refuses gift cards when the pricing module is disabled', function (): void {

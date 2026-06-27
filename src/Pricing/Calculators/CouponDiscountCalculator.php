@@ -7,21 +7,23 @@ namespace Selli\Commerce\Pricing\Calculators;
 use Selli\Commerce\Calculation\Adjustment;
 use Selli\Commerce\Calculation\Calculation;
 use Selli\Commerce\Contracts\Calculator;
+use Selli\Commerce\Contracts\CouponValidator;
 use Selli\Commerce\Contracts\RoundingStrategy;
 use Selli\Commerce\Enums\AdjustmentType;
 use Selli\Commerce\Exceptions\CommerceException;
-use Selli\Commerce\Pricing\DatabaseCouponValidator;
+use Selli\Commerce\Pricing\Models\Coupon;
 
 /**
- * Applies the cart's stored coupon codes as discount adjustments. Coupons apply
- * to the subtotal already net of promotions, each on the running balance.
- * Codes that have since become invalid are silently skipped (calculation is
- * read-only and must never throw).
+ * Applies the cart's stored coupon codes as discount adjustments. Acceptance is
+ * delegated to the {@see CouponValidator} contract (so a custom binding governs
+ * the pipeline too); the discount amount comes from the Coupon record. Coupons
+ * apply to the subtotal net of promotions, each on the running balance, and any
+ * code that is no longer valid is silently skipped (calculation never throws).
  */
 final class CouponDiscountCalculator implements Calculator
 {
     public function __construct(
-        private readonly DatabaseCouponValidator $validator,
+        private readonly CouponValidator $coupons,
         private readonly RoundingStrategy $rounding,
     ) {}
 
@@ -50,15 +52,15 @@ final class CouponDiscountCalculator implements Calculator
                 break;
             }
 
-            $coupon = $this->validator->find($code);
-
-            if ($coupon === null) {
+            try {
+                $this->coupons->validate($code, $context + ['subtotal' => $promotionNetSubtotal]);
+            } catch (CommerceException) {
                 continue;
             }
 
-            try {
-                $this->validator->assert($coupon, $code, $context + ['subtotal' => $promotionNetSubtotal]);
-            } catch (CommerceException) {
+            $coupon = Coupon::query()->where('code', $code)->first();
+
+            if (! $coupon instanceof Coupon) {
                 continue;
             }
 

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Selli\Commerce\Pricing\Listeners;
 
+use Brick\Money\Money;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Config;
@@ -170,6 +171,17 @@ final class RecordPricingUsage
                 'currency' => $currency,
                 'order_id' => $order->id,
             ]);
+
+            // If the card actually covered less than the frozen tender (the
+            // balance was spent between calculation and settlement), add the
+            // shortfall back onto the order so it never shows more gift-card
+            // tender than was really redeemed.
+            $shortfall = $amount - $applied;
+
+            if ($shortfall > 0 && $order->grand_total !== null) {
+                $order->grand_total = $order->grand_total->plus(Money::ofMinor($shortfall, $currency));
+                $order->save();
+            }
 
             $this->events->dispatch(new GiftCardRedeemed($giftCard, $applied, $order->id));
         });
