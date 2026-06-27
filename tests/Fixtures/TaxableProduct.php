@@ -12,6 +12,11 @@ use Selli\Commerce\Contracts\Taxable;
  */
 class TaxableProduct extends Product implements Taxable
 {
+    public function getPurchasableType(): string
+    {
+        return 'taxable_product';
+    }
+
     public function getTaxCategory(): ?string
     {
         return is_string($this->tax_category) ? $this->tax_category : null;

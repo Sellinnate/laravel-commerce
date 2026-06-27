@@ -213,6 +213,51 @@ it('keeps the tax category on a line across idempotent adds', function (): void 
         ->and($this->carts->calculate($cart)->taxTotal()->getMinorAmount()->toInt())->toBe(1000);
 });
 
+it('drops a stale tax category when the purchasable no longer provides one', function (): void {
+    config()->set('commerce.tax.prices_include_tax', false);
+    TaxRate::factory()->create(['category' => 'standard', 'country' => 'IT', 'rate' => 2200, 'name' => 'VAT 22%']);
+    TaxRate::factory()->create(['category' => 'reduced', 'country' => 'IT', 'rate' => 1000, 'name' => 'VAT 10%']);
+
+    $product = TaxableProduct::create(['name' => 'Book', 'price_cents' => 10000, 'tax_category' => 'reduced']);
+    $cart = $this->carts->create('EUR');
+    $this->carts->add($cart, $product, 1); // freezes 'reduced'
+
+    // The product loses its reduced category; the next add must clear the
+    // frozen one so tax falls back to the default 'standard' rate.
+    $product->update(['tax_category' => null]);
+    $item = $this->carts->add($cart, $product, 1);
+    $this->carts->setTaxContext($cart, ['country' => 'IT']);
+
+    // 2 × 100.00 = 200.00 net at standard 22% → 44.00 (not the reduced 20.00).
+    expect($item->fresh()->metadata['tax_category'] ?? null)->toBeNull()
+        ->and($this->carts->calculate($cart)->taxTotal()->getMinorAmount()->toInt())->toBe(4400);
+});
+
+it('re-resolves the tax category from the live purchasable on merge', function (): void {
+    config()->set('commerce.tax.prices_include_tax', false);
+    TaxRate::factory()->create(['category' => 'standard', 'country' => 'IT', 'rate' => 2200, 'name' => 'VAT 22%']);
+    TaxRate::factory()->create(['category' => 'reduced', 'country' => 'IT', 'rate' => 1000, 'name' => 'VAT 10%']);
+
+    $product = TaxableProduct::create(['name' => 'Book', 'price_cents' => 10000, 'tax_category' => 'reduced']);
+
+    $guest = $this->carts->create('EUR');
+    $this->carts->add($guest, $product, 1); // guest line frozen at 'reduced'
+
+    // The product is re-categorised before the guest logs in and merges.
+    $product->update(['tax_category' => 'standard']);
+
+    $user = $this->carts->create('EUR');
+    $this->carts->merge($guest, $user);
+    $this->carts->setTaxContext($user, ['country' => 'IT']);
+
+    $line = $this->carts->recalculate($user);
+    $mergedItem = $user->fresh()->items->first();
+
+    // Merge re-froze the current 'standard' category → 22.00, not 10.00.
+    expect($mergedItem->metadata['tax_category'] ?? null)->toBe('standard')
+        ->and($line->taxTotal()->getMinorAmount()->toInt())->toBe(2200);
+});
+
 it('ignores a caller-supplied tax_category and uses the server default', function (): void {
     config()->set('commerce.tax.prices_include_tax', false);
     TaxRate::factory()->create(['category' => 'standard', 'country' => 'IT', 'rate' => 2200, 'name' => 'VAT 22%']);

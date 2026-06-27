@@ -13,6 +13,7 @@ use Orchestra\Testbench\TestCase as Orchestra;
 use Selli\Commerce\CommerceServiceProvider;
 use Selli\Commerce\Tests\Fixtures\Customer;
 use Selli\Commerce\Tests\Fixtures\Product;
+use Selli\Commerce\Tests\Fixtures\TaxableProduct;
 
 class TestCase extends Orchestra
 {
@@ -26,6 +27,7 @@ class TestCase extends Orchestra
 
         Relation::enforceMorphMap([
             'product' => Product::class,
+            'taxable_product' => TaxableProduct::class,
             'customer' => Customer::class,
         ]);
 
