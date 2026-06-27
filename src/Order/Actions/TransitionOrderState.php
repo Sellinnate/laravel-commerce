@@ -42,11 +42,12 @@ final class TransitionOrderState
      */
     public function handle(Order $order, string $toState, ?Model $by = null, ?string $reason = null): Order
     {
-        if ($by instanceof Authorizable) {
-            $this->gate->forUser($by)->authorize('transition', [$order, $toState]);
-        }
-
-        $from = $order->state::$name;
+        // Always authorise the transition. With an authorizable actor we gate
+        // as that user; otherwise we gate against the default Gate user. The
+        // default OrderPolicy is permissive, so headless apps keep working
+        // while integrators who tighten the policy gate every path.
+        $authorizer = $by instanceof Authorizable ? $this->gate->forUser($by) : $this->gate;
+        $authorizer->authorize('transition', [$order, $toState]);
 
         $actorId = null;
         if ($by !== null) {
@@ -55,10 +56,23 @@ final class TransitionOrderState
             $actorId = (string) $key;
         }
 
-        // The state change and its append-only audit row are atomic: if the
-        // log write fails, the transition itself rolls back, so the order can
-        // never end up in a new state without a matching trail entry.
-        DB::transaction(function () use ($order, $toState, $from, $by, $actorId, $reason): void {
+        $from = null;
+
+        // The state change and its append-only audit row are atomic, and the
+        // order row is locked and re-read first so two concurrent handlers
+        // cannot each transition from a stale state and clobber one another.
+        DB::transaction(function () use (&$from, $order, $toState, $by, $actorId, $reason): void {
+            $locked = Order::withoutTenantScope()
+                ->whereKey($order->id)
+                ->lockForUpdate()
+                ->first();
+
+            if ($locked !== null) {
+                $order->setRawAttributes($locked->getAttributes(), true);
+                $order->syncOriginal();
+            }
+
+            $from = $order->state::$name;
             $order->state->transitionTo($toState);
             $order->refresh();
 

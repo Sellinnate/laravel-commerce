@@ -27,6 +27,10 @@ final class DatabaseCartRepository implements CartRepository
             ->where('owner_type', $ownerType)
             ->where('owner_id', $ownerId)
             ->where('status', CartStatus::Active->value)
+            ->where(function ($query): void {
+                // Never resurrect a cart whose TTL has already elapsed.
+                $query->whereNull('expires_at')->orWhere('expires_at', '>', now());
+            })
             ->latest()
             ->first();
     }
