@@ -25,13 +25,14 @@ function placeSimpleOrder(): Order
 
 it('authorises transitions even without an actor via the policy', function (): void {
     // Tighten the policy to deny all transitions.
-    Gate::policy(Order::class, new class extends OrderPolicy
+    $denyAll = new class extends OrderPolicy
     {
         public function transition(?Authorizable $user, Order $order, string $toState): bool
         {
             return false;
         }
-    }::class);
+    };
+    Gate::policy(Order::class, $denyAll::class);
 
     $order = placeSimpleOrder();
 

@@ -74,6 +74,12 @@ final class PlaceOrder
 
             $cart->load('items');
 
+            // Re-check emptiness under the lock: a concurrent clear() could
+            // have removed every line between the pre-check and the lock.
+            if ($cart->isEmpty()) {
+                throw EmptyCartException::cannotPlaceOrder();
+            }
+
             // Re-validate availability at conversion time: stock may have
             // dropped since the items were added.
             $this->assertLinesAvailable($cart);

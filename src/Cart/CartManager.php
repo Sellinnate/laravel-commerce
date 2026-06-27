@@ -296,18 +296,23 @@ final class CartManager
     {
         $this->assertMutable($cart);
 
-        foreach ($cart->items as $item) {
-            $purchasable = $this->purchasables->resolve($item->purchasable_type, $item->purchasable_id);
+        DB::transaction(function () use ($cart): void {
+            $this->lockActiveCart($cart);
+            $cart->load('items');
 
-            if ($purchasable === null) {
-                continue;
+            foreach ($cart->items as $item) {
+                $purchasable = $this->purchasables->resolve($item->purchasable_type, $item->purchasable_id);
+
+                if ($purchasable === null) {
+                    continue;
+                }
+
+                $item->unit_price = $this->prices->resolve($purchasable, $cart->currency, $this->context($cart));
+                $item->save();
             }
 
-            $item->unit_price = $this->prices->resolve($purchasable, $cart->currency, $this->context($cart));
-            $item->save();
-        }
-
-        $cart->load('items');
+            $cart->load('items');
+        });
 
         return $this->calculate($cart);
     }
