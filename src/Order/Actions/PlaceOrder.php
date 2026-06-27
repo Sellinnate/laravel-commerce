@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Selli\Commerce\Order\Actions;
 
-use Brick\Math\RoundingMode;
 use Brick\Money\Money;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Support\Facades\DB;
@@ -26,6 +25,7 @@ use Selli\Commerce\Order\Models\Order;
 use Selli\Commerce\Order\Models\OrderLine;
 use Selli\Commerce\Order\Models\OrderStateTransition;
 use Selli\Commerce\Order\States\Pending;
+use Selli\Commerce\Support\MoneyMath;
 
 /**
  * The single transactional conversion of a cart into an order: run the final
@@ -148,10 +148,14 @@ final class PlaceOrder
                 }
             }
 
-            $itemsSubtotal = $calculation->itemsSubtotal();
+            $lines = $calculation->lines();
+            $allocations = MoneyMath::allocate(
+                $cartDiscount,
+                array_map(static fn (CalculationLine $l): int => $l->subtotal()->getMinorAmount()->toInt(), $lines),
+            );
 
-            foreach ($calculation->lines() as $line) {
-                $this->persistLine($order, $line, $cartDiscount, $itemsSubtotal);
+            foreach ($lines as $index => $line) {
+                $this->persistLine($order, $line, $allocations[$index]);
             }
 
             OrderStateTransition::query()->create([
@@ -205,12 +209,11 @@ final class PlaceOrder
         }
     }
 
-    private function persistLine(Order $order, CalculationLine $line, Money $cartDiscount, Money $itemsSubtotal): void
+    private function persistLine(Order $order, CalculationLine $line, Money $allocated): void
     {
         $purchasable = $this->purchasables->resolve($line->purchasableType, $line->purchasableId);
         $snapshot = $purchasable?->getPurchasableData() ?? $line->data;
 
-        $allocated = $this->allocate($cartDiscount, $line->subtotal(), $itemsSubtotal);
         $discount = $this->sumLineAdjustments($line, [AdjustmentType::Discount, AdjustmentType::Promotion])->plus($allocated);
         $tax = $this->sumLineAdjustments($line, [AdjustmentType::Tax]);
 
@@ -229,17 +232,6 @@ final class PlaceOrder
             'tax_detail' => $this->adjustmentsToArray($line, [AdjustmentType::Tax]),
             'discount_detail' => $this->adjustmentsToArray($line, [AdjustmentType::Discount, AdjustmentType::Promotion]),
         ]));
-    }
-
-    private function allocate(Money $cartDiscount, Money $lineSubtotal, Money $itemsSubtotal): Money
-    {
-        if ($cartDiscount->isZero() || $itemsSubtotal->isZero()) {
-            return $cartDiscount->multipliedBy(0);
-        }
-
-        return $cartDiscount
-            ->multipliedBy($lineSubtotal->getMinorAmount()->toInt())
-            ->dividedBy($itemsSubtotal->getMinorAmount()->toInt(), RoundingMode::HalfUp);
     }
 
     /**

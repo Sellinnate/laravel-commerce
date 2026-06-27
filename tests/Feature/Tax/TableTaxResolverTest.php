@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Selli\Commerce\Contracts\TaxResolver;
 use Selli\Commerce\Tax\Models\TaxRate;
 use Selli\Commerce\Tax\NullTaxResolver;
+use Selli\Commerce\Tax\RateResult;
 
 it('resolves a country-wide rate', function (): void {
     TaxRate::factory()->create(['category' => 'standard', 'country' => 'IT', 'region' => null, 'rate' => 2200, 'name' => 'VAT 22%']);
@@ -46,6 +47,19 @@ it('does not resolve another tenant rate for a null-tenant jurisdiction', functi
 
 it('the null resolver never resolves a rate', function (): void {
     expect((new NullTaxResolver)->resolve('standard', ['country' => 'IT']))->toBeNull();
+});
+
+it('breaks an exact tie deterministically by newest rate', function (): void {
+    // Two equally specific, equal-priority active rows for the same key. The
+    // resolver must always pick the same one (the most recently created).
+    TaxRate::factory()->create(['id' => '01000000000000000000000001', 'category' => 'standard', 'country' => 'IT', 'region' => null, 'rate' => 1000, 'name' => 'Old']);
+    TaxRate::factory()->create(['id' => '01000000000000000000000002', 'category' => 'standard', 'country' => 'IT', 'region' => null, 'rate' => 2200, 'name' => 'New']);
+
+    expect(app(TaxResolver::class)->resolve('standard', ['country' => 'IT'])?->basisPoints)->toBe(2200);
+});
+
+it('rejects negative basis points so a custom resolver cannot produce negative tax', function (): void {
+    expect(fn () => new RateResult(-1, 'Bad'))->toThrow(InvalidArgumentException::class);
 });
 
 it('exposes validity on the tax rate model', function (): void {

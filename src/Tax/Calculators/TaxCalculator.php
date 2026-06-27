@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Selli\Commerce\Tax\Calculators;
 
 use Brick\Math\RoundingMode;
-use Brick\Money\Money;
 use Illuminate\Support\Facades\Config;
 use Selli\Commerce\Calculation\Adjustment;
 use Selli\Commerce\Calculation\Calculation;
@@ -14,6 +13,7 @@ use Selli\Commerce\Contracts\Calculator;
 use Selli\Commerce\Contracts\RoundingStrategy;
 use Selli\Commerce\Contracts\TaxResolver;
 use Selli\Commerce\Enums\AdjustmentType;
+use Selli\Commerce\Support\MoneyMath;
 
 /**
  * Applies tax per line for the cart's jurisdiction, getting inclusive vs
@@ -71,7 +71,13 @@ final class TaxCalculator implements Calculator
             return;
         }
 
-        foreach ($calculation->lines() as $line) {
+        $lines = $calculation->lines();
+        $discountAllocations = MoneyMath::allocate(
+            $discountTotal,
+            array_map(static fn (CalculationLine $l): int => $l->subtotal()->getMinorAmount()->toInt(), $lines),
+        );
+
+        foreach ($lines as $index => $line) {
             $category = $this->category($line, $defaultCategory);
             $rate = $this->resolver->resolve($category, $jurisdiction);
 
@@ -79,7 +85,7 @@ final class TaxCalculator implements Calculator
                 continue;
             }
 
-            $net = $line->subtotal()->plus($this->allocatedDiscount($discountTotal, $line->subtotal(), $itemsSubtotal));
+            $net = $line->subtotal()->plus($discountAllocations[$index]);
 
             if ($net->isNegativeOrZero()) {
                 continue;
@@ -206,16 +212,5 @@ final class TaxCalculator implements Calculator
         $category = $line->data['tax_category'] ?? null;
 
         return is_string($category) && $category !== '' ? $category : $default;
-    }
-
-    private function allocatedDiscount(Money $discountTotal, Money $lineSubtotal, Money $itemsSubtotal): Money
-    {
-        if ($discountTotal->isZero()) {
-            return $discountTotal;
-        }
-
-        return $discountTotal
-            ->multipliedBy($lineSubtotal->getMinorAmount()->toInt())
-            ->dividedBy($itemsSubtotal->getMinorAmount()->toInt(), RoundingMode::HalfUp);
     }
 }

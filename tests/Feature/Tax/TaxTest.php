@@ -160,6 +160,27 @@ it('allocates cart-level discounts to lines so they reconcile with the order tot
         ->and($order->lines->first()->discount_total->getMinorAmount()->toInt())->toBe(-2000);
 });
 
+it('distributes the allocation remainder so multi-line totals reconcile exactly', function (): void {
+    config()->set('commerce.tax.prices_include_tax', false);
+    Coupon::factory()->create(['code' => 'SAVE10', 'type' => CouponType::Percentage, 'value' => 10]);
+
+    // Three lines whose 10% discount (−10.00 over 99.99) does not divide
+    // evenly; the leftover minor unit must land on a line, not be lost.
+    $cart = $this->carts->create('EUR');
+    foreach (['A', 'B', 'C'] as $name) {
+        $this->carts->add($cart, Product::create(['name' => $name, 'price_cents' => 3333]), 1);
+    }
+    $this->carts->applyCoupon($cart, 'SAVE10');
+
+    $order = app(PlaceOrder::class)->handle($cart);
+
+    $lineDiscountSum = $order->lines->sum(fn ($l) => $l->discount_total->getMinorAmount()->toInt());
+    $lineTotalSum = $order->lines->sum(fn ($l) => $l->line_total->getMinorAmount()->toInt());
+
+    expect($lineDiscountSum)->toBe($order->discount_total->getMinorAmount()->toInt())
+        ->and($lineTotalSum)->toBe($order->grand_total->getMinorAmount()->toInt());
+});
+
 it('carries the tax context from a guest cart on merge', function (): void {
     config()->set('commerce.tax.prices_include_tax', false);
     TaxRate::factory()->create(['category' => 'standard', 'country' => 'IT', 'rate' => 2200, 'name' => 'VAT 22%']);

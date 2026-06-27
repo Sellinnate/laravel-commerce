@@ -36,6 +36,10 @@ final class TableTaxResolver implements TaxResolver
                 fn ($query) => $query->where('tenant_id', $tenantId),
             )
             ->where(fn ($query) => $query->whereNull('region')->orWhere('region', $region))
+            // Deterministic tie-break for equally specific, equal-priority rows:
+            // order by the unique, monotonic ULID key so the newest rate wins.
+            // PHP's sort below is stable, so this ordering survives the re-sort.
+            ->orderByDesc('id')
             ->get();
 
         $best = $rates->sort(function (TaxRate $a, TaxRate $b) use ($region): int {
