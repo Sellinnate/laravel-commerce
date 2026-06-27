@@ -114,8 +114,13 @@ final class CartManager
             throw CurrencyMismatchException::between($cart->currency, $resolvedCurrency);
         }
 
-        // Freeze the purchasable's tax category onto the line so the tax
-        // calculator can rate it without re-resolving the catalogue.
+        // tax_category is server-determined from the purchasable, never trusted
+        // from caller metadata (which would let a client pick a lower/zero rate
+        // and underpay tax). Strip any supplied value, then set it from the
+        // Taxable purchasable; a non-Taxable purchasable gets no category and
+        // falls back to the (highest) default category.
+        unset($metadata['tax_category']);
+
         if ($purchasable instanceof Taxable) {
             $category = $purchasable->getTaxCategory();
 

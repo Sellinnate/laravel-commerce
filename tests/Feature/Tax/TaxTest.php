@@ -150,6 +150,22 @@ it('keeps the tax category on a line across idempotent adds', function (): void 
         ->and($this->carts->calculate($cart)->taxTotal()->getMinorAmount()->toInt())->toBe(1000);
 });
 
+it('ignores a caller-supplied tax_category and uses the server default', function (): void {
+    config()->set('commerce.tax.prices_include_tax', false);
+    TaxRate::factory()->create(['category' => 'standard', 'country' => 'IT', 'rate' => 2200, 'name' => 'VAT 22%']);
+    TaxRate::factory()->create(['category' => 'exempt', 'country' => 'IT', 'rate' => 0, 'name' => 'Exempt']);
+
+    // A non-Taxable product; the client tries to smuggle a zero-rate category.
+    $product = Product::create(['name' => 'Widget', 'price_cents' => 10000]);
+    $cart = $this->carts->create('EUR');
+    $item = $this->carts->add($cart, $product, 1, [], ['tax_category' => 'exempt']);
+    $this->carts->setTaxContext($cart, ['country' => 'IT']);
+
+    // The injected category is stripped → taxed at the default 'standard' 22%.
+    expect($item->metadata['tax_category'] ?? null)->toBeNull()
+        ->and($this->carts->calculate($cart)->taxTotal()->getMinorAmount()->toInt())->toBe(2200);
+});
+
 it('does not tax when the tax module is disabled', function (): void {
     config()->set('commerce.modules.tax', false);
     $carts = app(CartManager::class);

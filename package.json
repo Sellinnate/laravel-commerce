@@ -6,6 +6,7 @@
   "scripts": {
     "docs:dev": "docmd dev",
     "docs:build": "docmd build",
+    "build": "docmd build",
     "deploy": "wrangler deploy",
     "preview": "wrangler dev"
   },
