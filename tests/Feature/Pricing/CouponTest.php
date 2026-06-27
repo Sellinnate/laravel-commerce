@@ -153,6 +153,24 @@ it('refuses coupons when the pricing module is disabled', function (): void {
     $carts->applyCoupon($cart, 'ANY');
 })->throws(PricingModuleDisabledException::class);
 
+it('carries applied coupon codes when a guest cart merges into a user cart', function (): void {
+    Coupon::factory()->create(['code' => 'SAVE10', 'type' => CouponType::Percentage, 'value' => 10]);
+    $product = Product::create(['name' => 'Widget', 'price_cents' => 1000]);
+
+    $guest = $this->carts->create('EUR');
+    $this->carts->add($guest, $product, 1);
+    $this->carts->applyCoupon($guest, 'SAVE10');
+
+    $user = $this->carts->create('EUR');
+    $this->carts->add($user, $product, 1);
+
+    $this->carts->merge($guest, $user);
+
+    // Merged quantity is 2 (1 + 1) → subtotal 2000 → 10% = 200 discount.
+    expect($this->carts->coupons($user))->toContain('SAVE10')
+        ->and($this->carts->calculate($user)->discountTotal()->getMinorAmount()->toInt())->toBe(-200);
+});
+
 it('records coupon usage when the order is placed', function (): void {
     $coupon = Coupon::factory()->create(['code' => 'SAVE10', 'type' => CouponType::Percentage, 'value' => 10]);
     [$cart] = cartWith($this->carts, 1000, 2);

@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Config;
 use Selli\Commerce\Concerns\BelongsToTenant;
 use Selli\Commerce\Concerns\HasPrefixedTable;
 use Selli\Commerce\Database\Factories\PromotionFactory;
@@ -62,11 +63,23 @@ class Promotion extends Model
 
     protected $attributes = [
         'priority' => 0,
-        'stacking' => 'cumulative',
         'conditions' => '[]',
         'actions' => '[]',
         'active' => true,
     ];
+
+    protected static function booted(): void
+    {
+        // Promotions created without an explicit stacking policy fall back to
+        // the configured default.
+        static::creating(function (Promotion $promotion): void {
+            if (! array_key_exists('stacking', $promotion->getAttributes())) {
+                $promotion->stacking = StackingPolicy::tryFrom(
+                    Config::string('commerce.pricing.stacking', 'cumulative')
+                ) ?? StackingPolicy::Cumulative;
+            }
+        });
+    }
 
     public function isValidAt(Carbon $moment): bool
     {

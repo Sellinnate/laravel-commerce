@@ -91,6 +91,15 @@ it('records a free-shipping promotion as a tracked adjustment', function (): voi
         ->and($calc->grandTotal()->getMinorAmount()->toInt())->toBe(1000);
 });
 
+it('defaults a promotion stacking policy from config', function (): void {
+    config()->set('commerce.pricing.stacking', 'best_of');
+
+    $promotion = new Promotion(['name' => 'No stacking declared', 'actions' => []]);
+    $promotion->save();
+
+    expect($promotion->fresh()->stacking)->toBe(StackingPolicy::BestOf);
+});
+
 it('records a PromotionApplied event on placement', function (): void {
     Promotion::factory()->create(['name' => 'P', 'actions' => [['type' => 'percentage_off', 'percent' => 10]]]);
     [$cart] = cartSubtotal($this->carts, 1000, 1);

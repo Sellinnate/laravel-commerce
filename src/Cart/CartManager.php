@@ -17,6 +17,7 @@ use Selli\Commerce\Contracts\GiftCardValidator;
 use Selli\Commerce\Contracts\PriceResolver;
 use Selli\Commerce\Contracts\Purchasable;
 use Selli\Commerce\Contracts\PurchasableResolver;
+use Selli\Commerce\Enums\AdjustmentType;
 use Selli\Commerce\Enums\CartStatus;
 use Selli\Commerce\Enums\MergeStrategy;
 use Selli\Commerce\Events\Cart\CartCleared;
@@ -280,6 +281,14 @@ final class CartManager
                 $match->save();
             }
 
+            // Carry over applied coupon / gift-card codes so a guest cart's
+            // codes are not lost when it merges into the user cart at login.
+            foreach (['coupons', 'gift_cards'] as $key) {
+                $this->writeCodes($target, $key, array_values(array_unique(
+                    array_merge($this->readCodes($target, $key), $this->readCodes($source, $key)),
+                )));
+            }
+
             $source->status = CartStatus::Merged;
             $source->save();
 
@@ -335,12 +344,17 @@ final class CartManager
     {
         $this->assertMutable($cart);
 
+        $calculation = $this->calculate($cart);
+
         try {
             $this->couponValidator->validate($code, [
                 'currency' => $cart->currency,
                 'customer' => ['type' => $cart->owner_type, 'id' => $cart->owner_id],
                 'tenant_id' => $cart->tenant_id,
-                'subtotal' => $this->calculate($cart)->itemsSubtotal(),
+                // Validate the minimum against the same base the calculator uses
+                // (subtotal net of promotions), so a coupon accepted here is not
+                // silently skipped at calculation time.
+                'subtotal' => $calculation->itemsSubtotal()->plus($calculation->totalByType(AdjustmentType::Promotion)),
             ]);
         } catch (CommerceException $e) {
             $this->events->dispatch(new CouponRejected($cart, $code, $e->getMessage()));
@@ -551,6 +565,9 @@ final class CartManager
 
         $cart->status = $locked->status;
         $cart->expires_at = $locked->expires_at;
+        // Refresh metadata from the locked row so concurrent code-list updates
+        // (coupons / gift cards) are read-modify-written off the latest state.
+        $cart->metadata = $locked->metadata;
     }
 
     private function assertBelongsToCart(Cart $cart, CartItem $item): void

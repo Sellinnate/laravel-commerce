@@ -97,8 +97,8 @@ return [
         // Default customer segment used when none is supplied in the context.
         'default_segment' => env('COMMERCE_DEFAULT_SEGMENT', 'default'),
 
-        // Default stacking policy for promotions that do not declare one:
-        // "exclusive" (best single), "cumulative" (all apply), "best_of".
+        // Stacking policy applied to a Promotion created without an explicit
+        // one: "exclusive" (best single), "cumulative" (all apply), "best_of".
         'stacking' => env('COMMERCE_PROMO_STACKING', 'cumulative'),
     ],
 

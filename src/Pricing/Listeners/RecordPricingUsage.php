@@ -80,23 +80,34 @@ final class RecordPricingUsage
             return;
         }
 
-        $coupon = $this->scopedToOrderTenant(Coupon::withoutTenantScope(), $order)->whereKey($couponId)->first();
+        DB::transaction(function () use ($order, $couponId, $amount, $currency): void {
+            $coupon = $this->scopedToOrderTenant(Coupon::withoutTenantScope(), $order)
+                ->whereKey($couponId)
+                ->lockForUpdate()
+                ->first();
 
-        if (! $coupon instanceof Coupon) {
-            return;
-        }
+            if (! $coupon instanceof Coupon) {
+                return;
+            }
 
-        $coupon->increment('usage_count');
+            // Re-check the global limit under the lock so two concurrent
+            // placements cannot both push usage past the cap.
+            if ($coupon->hasReachedGlobalLimit()) {
+                return;
+            }
 
-        CouponRedemption::query()->create([
-            'coupon_id' => $coupon->id,
-            'tenant_id' => $order->tenant_id,
-            'customer_type' => $order->customer_type,
-            'customer_id' => $order->customer_id,
-            'order_id' => $order->id,
-            'amount' => $amount,
-            'currency' => $currency,
-        ]);
+            $coupon->increment('usage_count');
+
+            CouponRedemption::query()->create([
+                'coupon_id' => $coupon->id,
+                'tenant_id' => $order->tenant_id,
+                'customer_type' => $order->customer_type,
+                'customer_id' => $order->customer_id,
+                'order_id' => $order->id,
+                'amount' => $amount,
+                'currency' => $currency,
+            ]);
+        });
     }
 
     /**

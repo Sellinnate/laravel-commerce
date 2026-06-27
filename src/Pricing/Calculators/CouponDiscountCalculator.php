@@ -39,7 +39,11 @@ final class CouponDiscountCalculator implements Calculator
             'tenant_id' => $calculation->context['tenant_id'] ?? null,
         ];
 
-        $base = $calculation->itemsSubtotal()->plus($calculation->totalByType(AdjustmentType::Promotion));
+        // Minimum-spend is validated against the promotion-net subtotal (the
+        // same base CartManager::applyCoupon checks), while the discount itself
+        // is taken from the running balance after earlier coupons.
+        $promotionNetSubtotal = $calculation->itemsSubtotal()->plus($calculation->totalByType(AdjustmentType::Promotion));
+        $base = $promotionNetSubtotal;
 
         foreach ($codes as $code) {
             if ($base->isNegativeOrZero()) {
@@ -53,7 +57,7 @@ final class CouponDiscountCalculator implements Calculator
             }
 
             try {
-                $this->validator->assert($coupon, $code, $context + ['subtotal' => $base]);
+                $this->validator->assert($coupon, $code, $context + ['subtotal' => $promotionNetSubtotal]);
             } catch (CommerceException) {
                 continue;
             }
