@@ -81,6 +81,32 @@ it('applies the B2B intra-EU reverse charge', function (): void {
         ->and($taxAdjustment?->data['reverse_charge'] ?? null)->toBeTrue();
 });
 
+it('backs out embedded VAT for an exempt customer on inclusive prices', function (): void {
+    config()->set('commerce.tax.prices_include_tax', true);
+    $cart = taxedCart($this->carts, 12200, 1, ['country' => 'IT', 'exempt' => true, 'exempt_reason' => 'NGO']);
+
+    $calc = $this->carts->calculate($cart);
+    $taxAdjustment = collect($calc->lines())->flatMap(fn ($l) => $l->adjustments())
+        ->first(fn ($a) => $a->type === AdjustmentType::Tax);
+
+    // 122.00 gross embeds 22.00 VAT; the exempt buyer pays the 100.00 net.
+    expect($calc->grandTotal()->getMinorAmount()->toInt())->toBe(10000)
+        ->and($taxAdjustment?->data['exempt'] ?? null)->toBeTrue();
+});
+
+it('backs out embedded VAT under reverse charge on inclusive prices', function (): void {
+    config()->set('commerce.tax.prices_include_tax', true);
+    $cart = taxedCart($this->carts, 12200, 1, ['country' => 'IT', 'reverse_charge' => true, 'vat_number' => 'IT123']);
+
+    $calc = $this->carts->calculate($cart);
+    $taxAdjustment = collect($calc->lines())->flatMap(fn ($l) => $l->adjustments())
+        ->first(fn ($a) => $a->type === AdjustmentType::Tax);
+
+    // The B2B buyer self-accounts; they pay only the 100.00 net, not 122.00.
+    expect($calc->grandTotal()->getMinorAmount()->toInt())->toBe(10000)
+        ->and($taxAdjustment?->data['reverse_charge'] ?? null)->toBeTrue();
+});
+
 it('uses the purchasable tax category to pick a reduced rate', function (): void {
     config()->set('commerce.tax.prices_include_tax', false);
     TaxRate::factory()->create(['category' => 'reduced', 'country' => 'IT', 'rate' => 1000, 'name' => 'VAT 10%']);
@@ -116,6 +142,22 @@ it('freezes per-line tax onto the order at placement', function (): void {
     expect($order->tax_total->getMinorAmount()->toInt())->toBe(2200)
         ->and($order->grand_total->getMinorAmount()->toInt())->toBe(12200)
         ->and($order->lines->first()->tax_total->getMinorAmount()->toInt())->toBe(2200);
+});
+
+it('allocates cart-level discounts to lines so they reconcile with the order total', function (): void {
+    config()->set('commerce.tax.prices_include_tax', false);
+    Coupon::factory()->create(['code' => 'SAVE10', 'type' => CouponType::Percentage, 'value' => 10]);
+    $cart = taxedCart($this->carts, 10000, 2, ['country' => 'IT']);
+    $this->carts->applyCoupon($cart, 'SAVE10');
+
+    $order = app(PlaceOrder::class)->handle($cart);
+
+    // 2 × 100.00 = 200.00 net; −10% coupon = 180.00; +22% tax = 39.60 → 219.60.
+    $lineTotalSum = $order->lines->sum(fn ($l) => $l->line_total->getMinorAmount()->toInt());
+
+    expect($order->grand_total->getMinorAmount()->toInt())->toBe(21960)
+        ->and($lineTotalSum)->toBe(21960)
+        ->and($order->lines->first()->discount_total->getMinorAmount()->toInt())->toBe(-2000);
 });
 
 it('carries the tax context from a guest cart on merge', function (): void {

@@ -44,24 +44,6 @@ final class TaxCalculator implements Calculator
             return;
         }
 
-        if (($tax['exempt'] ?? null) === true) {
-            $this->annotate($calculation, 'Tax exempt', [
-                'exempt' => true,
-                'reason' => is_string($tax['exempt_reason'] ?? null) ? $tax['exempt_reason'] : null,
-            ]);
-
-            return;
-        }
-
-        if ($this->isReverseCharge($tax)) {
-            $this->annotate($calculation, 'Reverse charge (no VAT)', [
-                'reverse_charge' => true,
-                'vat_number' => is_string($tax['vat_number'] ?? null) ? $tax['vat_number'] : null,
-            ]);
-
-            return;
-        }
-
         $itemsSubtotal = $calculation->itemsSubtotal();
 
         if ($itemsSubtotal->isZero()) {
@@ -76,11 +58,22 @@ final class TaxCalculator implements Calculator
             'tenant_id' => $calculation->context['tenant_id'] ?? null,
         ];
 
+        $relief = $this->relief($tax);
+
         $discountTotal = $calculation->totalByType(AdjustmentType::Discount)
             ->plus($calculation->totalByType(AdjustmentType::Promotion));
 
+        // Exclusive price under relief: nothing to add — the price is already
+        // net; one annotation records why no VAT was charged.
+        if ($relief !== null && ! $inclusive) {
+            $this->annotate($calculation, $relief['label'], $relief['data']);
+
+            return;
+        }
+
         foreach ($calculation->lines() as $line) {
-            $rate = $this->resolver->resolve($this->category($line, $defaultCategory), $jurisdiction);
+            $category = $this->category($line, $defaultCategory);
+            $rate = $this->resolver->resolve($category, $jurisdiction);
 
             if ($rate === null || $rate->isZero()) {
                 continue;
@@ -89,6 +82,27 @@ final class TaxCalculator implements Calculator
             $net = $line->subtotal()->plus($this->allocatedDiscount($discountTotal, $line->subtotal(), $itemsSubtotal));
 
             if ($net->isNegativeOrZero()) {
+                continue;
+            }
+
+            if ($relief !== null) {
+                // Inclusive price under relief: back out the embedded VAT so the
+                // buyer actually pays the net amount, not the tax-inclusive one.
+                $embedded = $this->rounding->round(
+                    $net->multipliedBy($rate->basisPoints)->dividedBy(10000 + $rate->basisPoints, RoundingMode::HalfUp),
+                );
+
+                if (! $embedded->isZero()) {
+                    $line->addAdjustment(new Adjustment(
+                        AdjustmentType::Tax,
+                        $relief['label'],
+                        $embedded->multipliedBy(-1),
+                        'tax',
+                        true,
+                        $relief['data'] + ['category' => $category, 'rate' => $rate->basisPoints, 'relief' => true],
+                    ));
+                }
+
                 continue;
             }
 
@@ -108,9 +122,40 @@ final class TaxCalculator implements Calculator
                 $taxAmount,
                 'tax',
                 ! $inclusive,
-                ['category' => $this->category($line, $defaultCategory), 'rate' => $rate->basisPoints, 'inclusive' => $inclusive],
+                ['category' => $category, 'rate' => $rate->basisPoints, 'inclusive' => $inclusive],
             ));
         }
+    }
+
+    /**
+     * The VAT relief (exemption or reverse charge) in effect, or null.
+     *
+     * @param  array<array-key, mixed>  $tax
+     * @return array{label: string, data: array<string, mixed>}|null
+     */
+    private function relief(array $tax): ?array
+    {
+        if (($tax['exempt'] ?? null) === true) {
+            return [
+                'label' => 'Tax exempt',
+                'data' => [
+                    'exempt' => true,
+                    'reason' => is_string($tax['exempt_reason'] ?? null) ? $tax['exempt_reason'] : null,
+                ],
+            ];
+        }
+
+        if ($this->isReverseCharge($tax)) {
+            return [
+                'label' => 'Reverse charge (no VAT)',
+                'data' => [
+                    'reverse_charge' => true,
+                    'vat_number' => is_string($tax['vat_number'] ?? null) ? $tax['vat_number'] : null,
+                ],
+            ];
+        }
+
+        return null;
     }
 
     public function identifier(): string

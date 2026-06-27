@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Selli\Commerce\Order\Actions;
 
+use Brick\Math\RoundingMode;
 use Brick\Money\Money;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Support\Facades\DB;
@@ -136,8 +137,21 @@ final class PlaceOrder
             $order->metadata = $metadata;
             $order->save();
 
+            // Cart-level discounts (coupons, promotions) are allocated to lines
+            // in proportion to their subtotal so each order line reconciles with
+            // the header totals.
+            $cartDiscount = Money::zero($cart->currency);
+
+            foreach ($calculation->adjustments() as $adjustment) {
+                if (in_array($adjustment->type, [AdjustmentType::Discount, AdjustmentType::Promotion], true)) {
+                    $cartDiscount = $cartDiscount->plus($adjustment->amount);
+                }
+            }
+
+            $itemsSubtotal = $calculation->itemsSubtotal();
+
             foreach ($calculation->lines() as $line) {
-                $this->persistLine($order, $line);
+                $this->persistLine($order, $line, $cartDiscount, $itemsSubtotal);
             }
 
             OrderStateTransition::query()->create([
@@ -191,12 +205,13 @@ final class PlaceOrder
         }
     }
 
-    private function persistLine(Order $order, CalculationLine $line): void
+    private function persistLine(Order $order, CalculationLine $line, Money $cartDiscount, Money $itemsSubtotal): void
     {
         $purchasable = $this->purchasables->resolve($line->purchasableType, $line->purchasableId);
         $snapshot = $purchasable?->getPurchasableData() ?? $line->data;
 
-        $discount = $this->sumLineAdjustments($line, [AdjustmentType::Discount, AdjustmentType::Promotion]);
+        $allocated = $this->allocate($cartDiscount, $line->subtotal(), $itemsSubtotal);
+        $discount = $this->sumLineAdjustments($line, [AdjustmentType::Discount, AdjustmentType::Promotion])->plus($allocated);
         $tax = $this->sumLineAdjustments($line, [AdjustmentType::Tax]);
 
         $order->lines()->save(new OrderLine([
@@ -209,11 +224,22 @@ final class PlaceOrder
             'line_subtotal' => $this->rounding->round($line->subtotal()),
             'discount_total' => $this->rounding->round($discount),
             'tax_total' => $this->rounding->round($tax),
-            'line_total' => $this->rounding->round($line->total()),
+            'line_total' => $this->rounding->round($line->total()->plus($allocated)),
             'snapshot' => $snapshot,
             'tax_detail' => $this->adjustmentsToArray($line, [AdjustmentType::Tax]),
             'discount_detail' => $this->adjustmentsToArray($line, [AdjustmentType::Discount, AdjustmentType::Promotion]),
         ]));
+    }
+
+    private function allocate(Money $cartDiscount, Money $lineSubtotal, Money $itemsSubtotal): Money
+    {
+        if ($cartDiscount->isZero() || $itemsSubtotal->isZero()) {
+            return $cartDiscount->multipliedBy(0);
+        }
+
+        return $cartDiscount
+            ->multipliedBy($lineSubtotal->getMinorAmount()->toInt())
+            ->dividedBy($itemsSubtotal->getMinorAmount()->toInt(), RoundingMode::HalfUp);
     }
 
     /**
