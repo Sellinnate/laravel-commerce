@@ -67,6 +67,7 @@ class TestCase extends Orchestra
                 $table->char('currency', 3)->default('EUR');
                 $table->boolean('available')->default(true);
                 $table->integer('stock')->nullable();
+                $table->string('tax_category')->nullable();
                 $table->json('data')->nullable();
                 $table->timestamps();
             });

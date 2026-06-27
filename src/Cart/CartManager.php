@@ -18,6 +18,7 @@ use Selli\Commerce\Contracts\GiftCardValidator;
 use Selli\Commerce\Contracts\PriceResolver;
 use Selli\Commerce\Contracts\Purchasable;
 use Selli\Commerce\Contracts\PurchasableResolver;
+use Selli\Commerce\Contracts\Taxable;
 use Selli\Commerce\Enums\AdjustmentType;
 use Selli\Commerce\Enums\CartStatus;
 use Selli\Commerce\Enums\MergeStrategy;
@@ -111,6 +112,16 @@ final class CartManager
 
         if ($resolvedCurrency !== $cart->currency) {
             throw CurrencyMismatchException::between($cart->currency, $resolvedCurrency);
+        }
+
+        // Freeze the purchasable's tax category onto the line so the tax
+        // calculator can rate it without re-resolving the catalogue.
+        if ($purchasable instanceof Taxable) {
+            $category = $purchasable->getTaxCategory();
+
+            if (is_string($category) && $category !== '') {
+                $metadata['tax_category'] = $category;
+            }
         }
 
         return DB::transaction(function () use ($cart, $purchasable, $quantity, $options, $metadata, $unitPrice): CartItem {
@@ -414,6 +425,38 @@ final class CartManager
     public function removeGiftCard(Cart $cart, string $code): void
     {
         $this->removeCode($cart, 'gift_cards', $code);
+    }
+
+    /**
+     * Set the cart's tax context (jurisdiction and B2B / exemption flags) used
+     * by the tax calculator: country, region, exempt, exempt_reason, b2b,
+     * vat_number, reverse_charge.
+     *
+     * @param  array<string, mixed>  $context
+     */
+    public function setTaxContext(Cart $cart, array $context): void
+    {
+        $this->assertMutable($cart);
+
+        DB::transaction(function () use ($cart, $context): void {
+            $this->lockActiveCart($cart);
+
+            $metadata = $cart->metadata ?? [];
+            $metadata['tax'] = $context;
+            $cart->metadata = $metadata;
+
+            $this->touch($cart);
+        });
+    }
+
+    /**
+     * @return array<array-key, mixed>
+     */
+    public function taxContext(Cart $cart): array
+    {
+        $tax = ($cart->metadata ?? [])['tax'] ?? [];
+
+        return is_array($tax) ? $tax : [];
     }
 
     /**

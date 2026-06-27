@@ -104,6 +104,26 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Tax module
+    |--------------------------------------------------------------------------
+    */
+    'tax' => [
+        // Whether catalogue prices already include tax (B2C EU style) or are
+        // net and tax is added on top (B2B / US style). Inclusive tax is
+        // reported but never added twice to the total.
+        'prices_include_tax' => (bool) env('COMMERCE_TAX_INCLUSIVE', true),
+
+        // Tax category used for a purchasable that does not declare one.
+        'default_category' => env('COMMERCE_TAX_CATEGORY', 'standard'),
+
+        // Allow the B2B intra-EU reverse charge (VAT not applied, annotated)
+        // when the cart's tax context marks the customer as a VAT-registered
+        // business in a different EU country.
+        'reverse_charge' => (bool) env('COMMERCE_TAX_REVERSE_CHARGE', true),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Rounding
     |--------------------------------------------------------------------------
     | A single rounding mode governs the whole engine. Per-currency scale is

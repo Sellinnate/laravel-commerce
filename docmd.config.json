@@ -70,7 +70,10 @@
         { "title": "Price books", "path": "/modules/pricing/price-books", "icon": "book" },
         { "title": "Coupons", "path": "/modules/pricing/coupons", "icon": "ticket" },
         { "title": "Promotions", "path": "/modules/pricing/promotions", "icon": "percent" },
-        { "title": "Gift cards", "path": "/modules/pricing/gift-cards", "icon": "gift" }
+        { "title": "Gift cards", "path": "/modules/pricing/gift-cards", "icon": "gift" },
+        { "title": "Tax overview", "path": "/modules/tax/overview", "icon": "receipt" },
+        { "title": "Inclusive vs exclusive", "path": "/modules/tax/inclusive-exclusive", "icon": "divide" },
+        { "title": "Jurisdiction & reverse charge", "path": "/modules/tax/jurisdiction", "icon": "globe" }
       ]
     },
     {

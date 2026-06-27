@@ -19,4 +19,10 @@ All notable changes to `selli/commerce` will be documented in this file.
   - Promotions — a condition→action rule engine (`cart_subtotal_min`, `item_quantity_min`, `has_purchasable` → `percentage_off`, `fixed_off`, `free_shipping`) with explicit stacking policies (exclusive / cumulative / best-of) and priority.
   - Gift cards — prepaid balance applied as a tender (never below zero), decremented under a row lock with an append-only ledger on placement.
   - Pipeline auto-composition from enabled modules; events `CouponApplied`, `CouponRejected`, `PromotionApplied`, `GiftCardRedeemed`.
+- **Tax module** (toggleable via `commerce.modules.tax`):
+  - Inclusive (tax derived from the gross, never added twice) and exclusive (tax added on top) handling driven by `prices_include_tax`.
+  - Tax rates by category × jurisdiction (country, optional region with precedence, validity windows) in basis points, resolved by a `TableTaxResolver` (overridable `TaxResolver` contract, e.g. for an external provider).
+  - Per-purchasable tax category via the optional `Taxable` contract; cart `setTaxContext()` for jurisdiction and B2B/exemption flags.
+  - B2B intra-EU reverse charge and customer/product exemptions, each annotated with a reason on the order for fiscal justification.
+  - Tax computed on the discounted base and frozen per order line.
 - Full docmd documentation site and a Pest suite at 90%+ coverage, PHPStan max, Pint.

@@ -28,6 +28,7 @@ use Selli\Commerce\Contracts\OrderRepository;
 use Selli\Commerce\Contracts\PriceResolver;
 use Selli\Commerce\Contracts\PurchasableResolver;
 use Selli\Commerce\Contracts\RoundingStrategy;
+use Selli\Commerce\Contracts\TaxResolver;
 use Selli\Commerce\Contracts\TenantContext;
 use Selli\Commerce\Events\Order\OrderPlaced;
 use Selli\Commerce\Order\Models\Order;
@@ -55,6 +56,10 @@ use Selli\Commerce\Pricing\PriceBookResolver;
 use Selli\Commerce\Support\DefaultPriceResolver;
 use Selli\Commerce\Support\DefaultRoundingStrategy;
 use Selli\Commerce\Support\EloquentPurchasableResolver;
+use Selli\Commerce\Tax\Calculators\TaxCalculator;
+use Selli\Commerce\Tax\Models\TaxRate;
+use Selli\Commerce\Tax\NullTaxResolver;
+use Selli\Commerce\Tax\TableTaxResolver;
 use Selli\Commerce\Tenancy\CallbackTenantContext;
 use Selli\Commerce\Tenancy\NullTenantContext;
 use Spatie\LaravelPackageTools\Package;
@@ -99,6 +104,7 @@ final class CommerceServiceProvider extends PackageServiceProvider
             'commerce.promotion' => Promotion::class,
             'commerce.gift_card' => GiftCard::class,
             'commerce.gift_card_transaction' => GiftCardTransaction::class,
+            'commerce.tax_rate' => TaxRate::class,
         ]);
 
         Gate::policy(Order::class, OrderPolicy::class);
@@ -201,6 +207,19 @@ final class CommerceServiceProvider extends PackageServiceProvider
                 : $this->app->make(NullGiftCardValidator::class);
         });
 
+        $this->app->bind(TaxResolver::class, function (): TaxResolver {
+            $override = $this->binding(TaxResolver::class);
+
+            if ($override !== null) {
+                /** @var TaxResolver */
+                return $this->app->make($override);
+            }
+
+            return $this->taxEnabled()
+                ? $this->app->make(TableTaxResolver::class)
+                : $this->app->make(NullTaxResolver::class);
+        });
+
         $this->app->bind(CartRepository::class, function (): CartRepository {
             $override = $this->binding(CartRepository::class);
 
@@ -246,6 +265,11 @@ final class CommerceServiceProvider extends PackageServiceProvider
         return Config::boolean('commerce.modules.pricing', true);
     }
 
+    private function taxEnabled(): bool
+    {
+        return Config::boolean('commerce.modules.tax', true);
+    }
+
     /**
      * Auto-compose the pipeline from the enabled modules, ending with the
      * mandatory GrandTotalCalculator.
@@ -261,7 +285,9 @@ final class CommerceServiceProvider extends PackageServiceProvider
             $classes[] = CouponDiscountCalculator::class;
         }
 
-        // The Tax module splices its TaxCalculator here (before gift cards).
+        if ($this->taxEnabled()) {
+            $classes[] = TaxCalculator::class;
+        }
 
         if ($this->pricingEnabled()) {
             $classes[] = GiftCardCalculator::class;
