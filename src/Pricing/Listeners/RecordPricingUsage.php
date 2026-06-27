@@ -139,6 +139,20 @@ final class RecordPricingUsage
                 return;
             }
 
+            // Idempotent per order: a replayed event must not debit twice.
+            $alreadyRedeemed = $giftCard->transactions()
+                ->where('order_id', $order->id)
+                ->where('type', GiftCardTransactionType::Redeem->value)
+                ->exists();
+
+            if ($alreadyRedeemed) {
+                return;
+            }
+
+            // The debit is capped at the real remaining balance under the lock,
+            // so the ledger can never go negative (money integrity is preserved)
+            // even if overlapping checkouts each computed tender from the live
+            // balance. Hard reservation of tender is a planned v1.x feature.
             $applied = min($amount, $giftCard->balance);
 
             if ($applied <= 0) {

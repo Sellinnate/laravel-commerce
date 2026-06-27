@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Illuminate\Support\Facades\Event;
 use Selli\Commerce\Cart\CartManager;
 use Selli\Commerce\Enums\CouponType;
+use Selli\Commerce\Events\Order\OrderPlaced;
 use Selli\Commerce\Events\Pricing\CouponApplied;
 use Selli\Commerce\Events\Pricing\CouponRejected;
 use Selli\Commerce\Exceptions\CouponCurrencyMismatchException;
@@ -15,6 +16,7 @@ use Selli\Commerce\Exceptions\CouponNotFoundException;
 use Selli\Commerce\Exceptions\CouponUsageLimitReachedException;
 use Selli\Commerce\Exceptions\PricingModuleDisabledException;
 use Selli\Commerce\Order\Actions\PlaceOrder;
+use Selli\Commerce\Pricing\Listeners\RecordPricingUsage;
 use Selli\Commerce\Pricing\Models\Coupon;
 use Selli\Commerce\Pricing\Models\CouponRedemption;
 use Selli\Commerce\Tests\Fixtures\Product;
@@ -180,4 +182,17 @@ it('records coupon usage when the order is placed', function (): void {
 
     expect($coupon->fresh()->usage_count)->toBe(1)
         ->and(CouponRedemption::query()->where('coupon_id', $coupon->id)->where('amount', 200)->exists())->toBeTrue();
+});
+
+it('does not double-count coupon usage when the placed event is replayed', function (): void {
+    $coupon = Coupon::factory()->create(['code' => 'SAVE10', 'type' => CouponType::Percentage, 'value' => 10]);
+    [$cart] = cartWith($this->carts, 1000, 2);
+    $this->carts->applyCoupon($cart, 'SAVE10');
+    $order = app(PlaceOrder::class)->handle($cart);
+
+    app(RecordPricingUsage::class)
+        ->handle(new OrderPlaced($order));
+
+    expect($coupon->fresh()->usage_count)->toBe(1)
+        ->and(CouponRedemption::query()->where('coupon_id', $coupon->id)->count())->toBe(1);
 });

@@ -7,9 +7,11 @@ use Selli\Commerce\Cart\CartManager;
 use Selli\Commerce\Cart\Models\Cart;
 use Selli\Commerce\Contracts\GiftCardValidator;
 use Selli\Commerce\Enums\GiftCardTransactionType;
+use Selli\Commerce\Events\Order\OrderPlaced;
 use Selli\Commerce\Exceptions\GiftCardException;
 use Selli\Commerce\Exceptions\PricingModuleDisabledException;
 use Selli\Commerce\Order\Actions\PlaceOrder;
+use Selli\Commerce\Pricing\Listeners\RecordPricingUsage;
 use Selli\Commerce\Pricing\Models\GiftCard;
 use Selli\Commerce\Pricing\Models\GiftCardTransaction;
 use Selli\Commerce\Pricing\NullGiftCardValidator;
@@ -82,6 +84,22 @@ it('emits a GiftCardRedeemed event on placement', function (): void {
     app(PlaceOrder::class)->handle($cart);
 
     expect(DomainEvent::query()->where('name', 'GiftCardRedeemed')->exists())->toBeTrue();
+});
+
+it('does not double-debit a gift card when the placed event is replayed', function (): void {
+    $giftCard = GiftCard::factory()->create(['code' => 'GIFT10', 'initial_amount' => 1000, 'balance' => 1000]);
+    $cart = cartFor($this->carts, 3000, 1);
+    $this->carts->applyGiftCard($cart, 'GIFT10');
+    $order = app(PlaceOrder::class)->handle($cart);
+
+    expect($giftCard->fresh()->balance)->toBe(0);
+
+    // Replay the event.
+    app(RecordPricingUsage::class)
+        ->handle(new OrderPlaced($order));
+
+    expect($giftCard->fresh()->balance)->toBe(0)
+        ->and(GiftCardTransaction::query()->where('gift_card_id', $giftCard->id)->count())->toBe(1);
 });
 
 it('refuses gift cards when the pricing module is disabled', function (): void {
