@@ -138,6 +138,20 @@ it('consumes a cart hold when fulfilling that cart\'s order', function (): void 
         ->and(StockReservation::where('reference_id', 'cart-1')->where('status', ReservationStatus::Active->value)->count())->toBe(0);
 });
 
+it('releases the unused remainder of a partially consumed hold', function (): void {
+    $this->inventory->receive('product', 'p1', 10);
+    $this->inventory->hold('cart-1', 'product', 'p1', 5, null); // hold 5
+
+    // The order only needs 3 of the 5 held: 3 ship, 2 return to available.
+    $this->inventory->fulfillOrder('order-1', [
+        ['type' => 'product', 'id' => 'p1', 'quantity' => 3, 'name' => 'P1'],
+    ], null, 'cart-1');
+
+    // on_hand 7, no orphaned reserved: ATP is the full 7, not 5.
+    expect($this->inventory->availableToPromise('product', 'p1', null))->toBe(7)
+        ->and(StockReservation::where('reference_id', 'cart-1')->where('status', ReservationStatus::Active->value)->count())->toBe(0);
+});
+
 it('isolates stock between tenants', function (): void {
     $this->inventory->receive('product', 'p1', 10, tenantId: 'tenant-a');
 

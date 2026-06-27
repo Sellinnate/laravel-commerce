@@ -184,8 +184,15 @@ final class InventoryManager implements StockKeeper, StockResolver
                     continue;
                 }
 
-                // Consume any holds the originating cart placed first, so held
-                // stock is shipped rather than double-counted.
+                // Release any expired holds for this purchasable first, so the
+                // reserved counters reflect only live claims: an expired hold
+                // must never get a free pass to ship (which could oversell) and
+                // must not make on-hand stock look unavailable.
+                $this->releaseExpiredFor($type, $id, $tenantId);
+
+                // Consume the originating cart's still-live holds, so held stock
+                // is shipped rather than double-counted. (Its expired holds were
+                // just released above and fall through to a fresh, locked ship.)
                 if ($cartId !== null) {
                     $needed = $this->consumeCartHolds($cartId, $orderId, $type, $id, $needed, $tenantId);
                 }
@@ -197,7 +204,7 @@ final class InventoryManager implements StockKeeper, StockResolver
                 if ($needed > 0) {
                     $available = $this->availableToPromise($type, $id, $tenantId) ?? 0;
 
-                    if (! $this->backorderAllowed($type, $id, $tenantId)) {
+                    if (! $this->allowsBackorder($type, $id, $tenantId)) {
                         throw InsufficientStockException::for($name, $line['quantity'], max(0, $available));
                     }
 
@@ -236,6 +243,24 @@ final class InventoryManager implements StockKeeper, StockResolver
     // ---------------------------------------------------------------------
 
     /**
+     * Release every expired-but-still-active hold for a purchasable, inside the
+     * current transaction, so the reserved counters reflect only live claims.
+     */
+    private function releaseExpiredFor(string $type, string $id, ?string $tenantId): void
+    {
+        StockReservation::withoutTenantScope()
+            ->where('purchasable_type', $type)
+            ->where('purchasable_id', $id)
+            ->when($tenantId === null, fn (Builder $q) => $q->whereNull('tenant_id'), fn (Builder $q) => $q->where('tenant_id', $tenantId))
+            ->where('status', ReservationStatus::Active->value)
+            ->whereNotNull('expires_at')
+            ->where('expires_at', '<=', $this->now())
+            ->lockForUpdate()
+            ->get()
+            ->each(fn (StockReservation $reservation) => $this->releaseReservation($reservation));
+    }
+
+    /**
      * Consume the cart's active holds for a purchasable, turning held stock into
      * shipments attributed to the order. Returns the still-unfulfilled quantity.
      */
@@ -259,14 +284,22 @@ final class InventoryManager implements StockKeeper, StockResolver
             }
 
             $take = min($hold->quantity, $needed);
+            // The whole reservation is closed here, so the FULL held quantity
+            // leaves `reserved` — `take` units ship (also leaving on_hand) and any
+            // unused remainder is released back to available, never orphaned.
+            $remainder = $hold->quantity - $take;
             $item = $this->lockItem($type, $id, $tenantId, $hold->warehouse_id);
 
             $item->on_hand -= $take;
-            $item->reserved -= $take;
+            $item->reserved -= $hold->quantity;
             $item->version++;
             $item->save();
 
             $this->record($hold->warehouse_id, $type, $id, StockMovementType::Shipment, -$take, $tenantId, 'order fulfilment', 'commerce.order', $orderId);
+
+            if ($remainder > 0) {
+                $this->record($hold->warehouse_id, $type, $id, StockMovementType::Release, -$remainder, $tenantId, 'unused cart hold', 'commerce.order', $orderId);
+            }
 
             $hold->status = ReservationStatus::Consumed;
             $hold->reference_type = 'commerce.order';
@@ -440,7 +473,7 @@ final class InventoryManager implements StockKeeper, StockResolver
         ]);
     }
 
-    private function backorderAllowed(string $type, string $id, ?string $tenantId): bool
+    public function allowsBackorder(string $type, string $id, ?string $tenantId): bool
     {
         $default = BackorderPolicy::fromConfig();
 
@@ -450,6 +483,18 @@ final class InventoryManager implements StockKeeper, StockResolver
             ->first();
 
         return $item instanceof StockItem ? $item->allowsBackorder($default) : $default->allowsBackorder();
+    }
+
+    public function heldQuantity(string $referenceType, string $referenceId, string $type, string $id, ?string $tenantId): int
+    {
+        return (int) StockReservation::withoutTenantScope()
+            ->where('reference_type', $referenceType)
+            ->where('reference_id', $referenceId)
+            ->where('purchasable_type', $type)
+            ->where('purchasable_id', $id)
+            ->when($tenantId === null, fn (Builder $q) => $q->whereNull('tenant_id'), fn (Builder $q) => $q->where('tenant_id', $tenantId))
+            ->holding($this->now())
+            ->sum('quantity');
     }
 
     private function holdingReserved(string $type, string $id, ?string $tenantId, Carbon $moment): int

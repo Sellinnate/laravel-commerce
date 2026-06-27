@@ -129,8 +129,11 @@ final class PlaceOrder
                 $calculation->adjustments(),
             );
 
+            // Both `_adjustments` and `_backorders` are server-owned: strip any
+            // caller-supplied value so a checkout cannot forge redemptions or a
+            // backorder record. They are (re)written below from server state.
             $metadata = $order->metadata ?? [];
-            unset($metadata['_adjustments']);
+            unset($metadata['_adjustments'], $metadata['_backorders']);
 
             if ($adjustments !== []) {
                 $metadata['_adjustments'] = $adjustments;

@@ -22,7 +22,6 @@ use Selli\Commerce\Contracts\StockKeeper;
 use Selli\Commerce\Contracts\StockResolver;
 use Selli\Commerce\Contracts\Taxable;
 use Selli\Commerce\Enums\AdjustmentType;
-use Selli\Commerce\Enums\BackorderPolicy;
 use Selli\Commerce\Enums\CartStatus;
 use Selli\Commerce\Enums\MergeStrategy;
 use Selli\Commerce\Enums\ReservationTiming;
@@ -286,6 +285,13 @@ final class CartManager
             $source->load('items');
             $target->load('items');
 
+            // Release the source's stock holds up front so the availability
+            // checks below weigh the merged totals against only live competing
+            // holds — not the source's own holds, which are being merged in. (A
+            // no-op under the default place-order timing.) The transaction makes
+            // this atomic: a violation rolls the release back too.
+            $this->releaseStockHolds($source);
+
             foreach ($source->items as $sourceItem) {
                 $match = $this->matchLine($target, $sourceItem->purchasable_type, $sourceItem->purchasable_id, $sourceItem->options ?? []);
 
@@ -300,7 +306,9 @@ final class CartManager
                 $category = $this->resolveTaxCategory($purchasable);
 
                 if ($match === null) {
-                    $this->assertAvailableForMerge($sourceItem, $sourceItem->quantity);
+                    // Check the target cart's running total against host
+                    // availability AND inventory ATP, not just the single line.
+                    $this->assertCartQuantityAvailable($target, $purchasable, $sourceItem->purchasable_type, $sourceItem->purchasable_id, $sourceItem->name, $sourceItem->quantity, null);
 
                     $created = $target->items()->create([
                         'purchasable_type' => $sourceItem->purchasable_type,
@@ -326,7 +334,7 @@ final class CartManager
                     MergeStrategy::Replace => $sourceItem->quantity,
                 };
 
-                $this->assertAvailableForMerge($sourceItem, $newQuantity);
+                $this->assertCartQuantityAvailable($target, $purchasable, $sourceItem->purchasable_type, $sourceItem->purchasable_id, $sourceItem->name, $newQuantity, $match->id);
 
                 $match->quantity = $newQuantity;
                 $match->unit_price = $this->mergedUnitPrice($target, $match, $newQuantity);
@@ -353,10 +361,8 @@ final class CartManager
 
             $target->load('items');
 
-            // Move stock holds onto the surviving target: the source's holds are
-            // released and the target re-holds its (now combined) line totals.
-            $this->releaseStockHolds($source);
-
+            // Re-hold the target's now-combined line totals (the source's holds
+            // were released up front).
             foreach ($this->distinctPurchasables($target) as $purchasable) {
                 $this->syncStockHold($target, $purchasable['type'], $purchasable['id']);
             }
@@ -788,7 +794,15 @@ final class CartManager
         // case the shortfall is settled (and annotated) at placement.
         $available = $this->stockResolver->availableToPromise($type, (string) $id, $cart->tenant_id);
 
-        if ($available !== null && $total > $available && ! BackorderPolicy::fromConfig()->allowsBackorder()) {
+        if ($available === null) {
+            return;
+        }
+
+        // Add back this cart's own current hold (add-to-cart timing) so it never
+        // counts against itself: the hold is about to be recomputed to $total.
+        $available += $this->stockResolver->heldQuantity('commerce.cart', $cart->id, $type, (string) $id, $cart->tenant_id);
+
+        if ($total > $available && ! $this->stockResolver->allowsBackorder($type, (string) $id, $cart->tenant_id)) {
             throw ProductNotAvailableException::for($name, $total);
         }
     }
@@ -866,15 +880,6 @@ final class CartManager
      * Throw if a live purchasable cannot satisfy the post-merge quantity.
      * Unresolvable purchasables (catalogue removed) are skipped.
      */
-    private function assertAvailableForMerge(CartItem $item, int $quantity): void
-    {
-        $purchasable = $this->purchasables->resolve($item->purchasable_type, $item->purchasable_id);
-
-        if ($purchasable !== null && ! $purchasable->isAvailable($quantity)) {
-            throw ProductNotAvailableException::for($item->name, $quantity);
-        }
-    }
-
     private function assertQuantity(int $quantity): void
     {
         if ($quantity < 1) {

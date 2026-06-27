@@ -21,6 +21,18 @@ final class NullInventory implements StockKeeper, StockResolver
         return null;
     }
 
+    public function allowsBackorder(string $type, string $id, ?string $tenantId): bool
+    {
+        // Untracked stock is never ATP-enforced, so this is never consulted by
+        // the cart; report false for a defined, conservative answer.
+        return false;
+    }
+
+    public function heldQuantity(string $referenceType, string $referenceId, string $type, string $id, ?string $tenantId): int
+    {
+        return 0;
+    }
+
     public function fulfillOrder(string $orderId, array $lines, ?string $tenantId, ?string $cartId = null): array
     {
         return [];

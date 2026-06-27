@@ -2,11 +2,14 @@
 
 declare(strict_types=1);
 
+use Illuminate\Support\Carbon;
 use Selli\Commerce\Cart\CartManager;
+use Selli\Commerce\Enums\MergeStrategy;
 use Selli\Commerce\Enums\StockMovementType;
 use Selli\Commerce\Exceptions\InsufficientStockException;
 use Selli\Commerce\Exceptions\ProductNotAvailableException;
 use Selli\Commerce\Inventory\InventoryManager;
+use Selli\Commerce\Inventory\Models\StockItem;
 use Selli\Commerce\Inventory\Models\StockMovement;
 use Selli\Commerce\Order\Actions\PlaceOrder;
 use Selli\Commerce\Order\Models\Order;
@@ -88,6 +91,75 @@ it('leaves an untracked product to the host availability', function (): void {
 
     expect($order->lines)->toHaveCount(1)
         ->and($this->inventory->availableToPromise('product', $product->getPurchasableId(), null))->toBeNull();
+});
+
+it('refuses an expired-hold cart that lost its stock to another buyer', function (): void {
+    config()->set('commerce.inventory.reserve_on', 'add_to_cart');
+    config()->set('commerce.inventory.reservation_ttl', 30);
+    config()->set('commerce.inventory.backorder', 'deny');
+    $carts = app(CartManager::class);
+    $product = stockedProduct($this->inventory, 3);
+
+    $slow = $carts->create('EUR');
+    $carts->add($slow, $product, 3); // holds all 3
+
+    // The hold lapses; the stock is promised to others again.
+    Carbon::setTestNow(Carbon::now()->addHour());
+    $fast = $carts->create('EUR');
+    $carts->add($fast, $product, 3); // ATP is back to 3
+    app(PlaceOrder::class)->handle($fast); // ships all 3
+
+    // The dawdling cart's expired hold gives no free pass — it is refused.
+    expect(fn () => app(PlaceOrder::class)->handle($slow))
+        ->toThrow(InsufficientStockException::class)
+        ->and($this->inventory->availableToPromise('product', $product->getPurchasableId(), null))->toBe(0);
+    Carbon::setTestNow();
+});
+
+it('respects a per-item backorder override at add time', function (): void {
+    config()->set('commerce.inventory.backorder', 'deny');
+    $product = stockedProduct($this->inventory, 2);
+
+    // This SKU is the exception: it may be back-ordered despite the deny default.
+    StockItem::query()
+        ->where('purchasable_id', $product->getPurchasableId())
+        ->update(['allow_backorder' => true]);
+
+    $cart = app(CartManager::class)->create('EUR');
+
+    // Adding beyond ATP is allowed because the item permits backorder.
+    app(CartManager::class)->add($cart, $product, 5);
+
+    expect($cart->fresh()->items)->toHaveCount(1);
+});
+
+it('enforces ATP totals when merging carts', function (): void {
+    config()->set('commerce.inventory.backorder', 'deny');
+    $product = stockedProduct($this->inventory, 3); // place-order timing: no cart holds
+
+    // Each cart fits on its own (3 in stock, no holds), but their sum is 4.
+    $guest = $this->carts->create('EUR');
+    $this->carts->add($guest, $product, 2);
+    $user = $this->carts->create('EUR');
+    $this->carts->add($user, $product, 2);
+
+    expect(fn () => $this->carts->merge($guest, $user, MergeStrategy::Sum))
+        ->toThrow(ProductNotAvailableException::class)
+        ->and($user->fresh()->items->first()->quantity)->toBe(2); // rolled back
+});
+
+it('strips a caller-forged backorder list from the order', function (): void {
+    $product = stockedProduct($this->inventory, 10);
+    $cart = $this->carts->create('EUR');
+    $this->carts->add($cart, $product, 1);
+
+    // The client tries to smuggle a fake backorder record; fulfilment creates
+    // none, so the server-owned key must not survive.
+    $order = app(PlaceOrder::class)->handle($cart, [
+        'metadata' => ['_backorders' => [['type' => 'product', 'id' => 'forged', 'quantity' => 99]]],
+    ]);
+
+    expect($order->fresh()->metadata['_backorders'] ?? null)->toBeNull();
 });
 
 it('does not track stock when the module is disabled', function (): void {
