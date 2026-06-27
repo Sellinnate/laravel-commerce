@@ -20,6 +20,10 @@ beforeEach(function (): void {
     $this->inventory = app(InventoryManager::class);
 });
 
+afterEach(function (): void {
+    Carbon::setTestNow();
+});
+
 function stockedProduct(InventoryManager $inventory, int $onHand, int $priceCents = 1000): Product
 {
     $product = Product::create(['name' => 'Widget', 'price_cents' => $priceCents]);
@@ -146,6 +150,24 @@ it('enforces ATP totals when merging carts', function (): void {
     expect(fn () => $this->carts->merge($guest, $user, MergeStrategy::Sum))
         ->toThrow(ProductNotAvailableException::class)
         ->and($user->fresh()->items->first()->quantity)->toBe(2); // rolled back
+});
+
+it('does not let a cart hold oversell after stock is adjusted below it', function (): void {
+    config()->set('commerce.inventory.reserve_on', 'add_to_cart');
+    config()->set('commerce.inventory.backorder', 'deny');
+    $carts = app(CartManager::class);
+    $product = stockedProduct($this->inventory, 5);
+    $cart = $carts->create('EUR');
+    $carts->add($cart, $product, 3); // holds 3 of 5
+
+    // An admin counts down to 1 unit — below the 3 already held.
+    $this->inventory->adjust('product', $product->getPurchasableId(), -4);
+
+    // Checkout cannot ship 3 from 1 on-hand under deny: refused, no oversell, and
+    // the whole transaction rolls back so on_hand is untouched.
+    expect(fn () => app(PlaceOrder::class)->handle($cart))
+        ->toThrow(InsufficientStockException::class)
+        ->and(StockItem::where('purchasable_id', $product->getPurchasableId())->sum('on_hand'))->toBe(1);
 });
 
 it('strips a caller-forged backorder list from the order', function (): void {

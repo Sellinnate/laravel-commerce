@@ -7,6 +7,10 @@ use Selli\Commerce\Enums\ReservationStatus;
 use Selli\Commerce\Inventory\InventoryManager;
 use Selli\Commerce\Inventory\Models\StockReservation;
 
+afterEach(function (): void {
+    Carbon::setTestNow();
+});
+
 it('releases expired reservations from the console', function (): void {
     $inventory = app(InventoryManager::class);
     $inventory->receive('product', 'p1', 10);

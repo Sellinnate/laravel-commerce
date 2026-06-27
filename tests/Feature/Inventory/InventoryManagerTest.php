@@ -11,6 +11,7 @@ use Selli\Commerce\Events\Inventory\StockDepleted;
 use Selli\Commerce\Events\Inventory\StockReleased;
 use Selli\Commerce\Events\Inventory\StockReserved;
 use Selli\Commerce\Exceptions\InsufficientStockException;
+use Selli\Commerce\Exceptions\ProductNotAvailableException;
 use Selli\Commerce\Inventory\InventoryManager;
 use Selli\Commerce\Inventory\Models\StockMovement;
 use Selli\Commerce\Inventory\Models\StockReservation;
@@ -18,6 +19,12 @@ use Selli\Commerce\Inventory\Models\Warehouse;
 
 beforeEach(function (): void {
     $this->inventory = app(InventoryManager::class);
+});
+
+// setTestNow() mutates global state; always restore it so a failing time-travel
+// assertion cannot leak the frozen clock into later tests.
+afterEach(function (): void {
+    Carbon::setTestNow();
 });
 
 it('records a receipt and reports available-to-promise', function (): void {
@@ -158,10 +165,11 @@ it('atomically refuses a hold that would oversell under the lock', function (): 
     $this->inventory->receive('product', 'p1', 2);
     $this->inventory->hold('cart-1', 'product', 'p1', 2, null); // holds all
 
-    // A hold for another cart beyond ATP is refused at the row lock, even though
-    // an advisory pre-check might have passed concurrently.
+    // A hold for another cart beyond ATP is refused at the row lock, with the
+    // same exception the cart surfaces, even though an advisory pre-check might
+    // have passed concurrently.
     expect(fn () => $this->inventory->hold('cart-2', 'product', 'p1', 1, null))
-        ->toThrow(InsufficientStockException::class)
+        ->toThrow(ProductNotAvailableException::class)
         ->and($this->inventory->availableToPromise('product', 'p1', null))->toBe(0);
 });
 

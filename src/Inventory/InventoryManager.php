@@ -19,6 +19,7 @@ use Selli\Commerce\Events\Inventory\StockDepleted;
 use Selli\Commerce\Events\Inventory\StockReleased;
 use Selli\Commerce\Events\Inventory\StockReserved;
 use Selli\Commerce\Exceptions\InsufficientStockException;
+use Selli\Commerce\Exceptions\ProductNotAvailableException;
 use Selli\Commerce\Inventory\Models\StockItem;
 use Selli\Commerce\Inventory\Models\StockMovement;
 use Selli\Commerce\Inventory\Models\StockReservation;
@@ -142,7 +143,10 @@ final class InventoryManager implements StockKeeper, StockResolver
                 $available = $this->availableToPromise($type, $id, $tenantId);
 
                 if ($available !== null && $delta > $available) {
-                    throw InsufficientStockException::for("purchasable {$id}", $quantity, max(0, $previous + $available));
+                    // Surface the same exception the cart's own availability check
+                    // raises, so a concurrent add/merge fails consistently rather
+                    // than leaking the fulfilment-time InsufficientStockException.
+                    throw ProductNotAvailableException::for("purchasable {$id}", $quantity);
                 }
             }
 
@@ -311,21 +315,30 @@ final class InventoryManager implements StockKeeper, StockResolver
             }
 
             $take = min($hold->quantity, $needed);
-            // The whole reservation is closed here, so the FULL held quantity
-            // leaves `reserved` — `take` units ship (also leaving on_hand) and any
-            // unused remainder is released back to available, never orphaned.
-            $remainder = $hold->quantity - $take;
             $item = $this->lockItem($type, $id, $tenantId, $hold->warehouse_id);
 
-            $item->on_hand -= $take;
+            // Cap the shipment at what is physically on hand: an admin may have
+            // adjusted stock down below the held amount, and a hold must never be
+            // a free pass to drive on_hand negative under a deny policy. Whatever
+            // the hold cannot cover falls through to shipFromStock / the backorder
+            // policy like any other shortfall.
+            $ship = max(0, min($take, $item->on_hand));
+            // The whole reservation is closed here, so the FULL held quantity
+            // leaves `reserved`: `ship` units leave on_hand too, and the rest is
+            // released — never orphaned.
+            $released = $hold->quantity - $ship;
+
+            $item->on_hand -= $ship;
             $item->reserved -= $hold->quantity;
             $item->version++;
             $item->save();
 
-            $this->record($hold->warehouse_id, $type, $id, StockMovementType::Shipment, -$take, $tenantId, 'order fulfilment', 'commerce.order', $orderId);
+            if ($ship > 0) {
+                $this->record($hold->warehouse_id, $type, $id, StockMovementType::Shipment, -$ship, $tenantId, 'order fulfilment', 'commerce.order', $orderId);
+            }
 
-            if ($remainder > 0) {
-                $this->record($hold->warehouse_id, $type, $id, StockMovementType::Release, -$remainder, $tenantId, 'unused cart hold', 'commerce.order', $orderId);
+            if ($released > 0) {
+                $this->record($hold->warehouse_id, $type, $id, StockMovementType::Release, -$released, $tenantId, 'cart hold settled', 'commerce.order', $orderId);
             }
 
             $hold->status = ReservationStatus::Consumed;
@@ -335,7 +348,9 @@ final class InventoryManager implements StockKeeper, StockResolver
 
             $this->depletedIfEmpty($item, $type, $id, $tenantId);
 
-            $needed -= $take;
+            // Only what actually shipped reduces the order's need; any shortfall
+            // the hold could not cover flows to shipFromStock / the backorder gate.
+            $needed -= $ship;
         }
 
         return $needed;
