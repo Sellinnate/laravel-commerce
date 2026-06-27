@@ -2,13 +2,21 @@
 
 declare(strict_types=1);
 
+use Brick\Money\Money;
+use Selli\Commerce\Calculation\Adjustment;
+use Selli\Commerce\Calculation\Calculation;
+use Selli\Commerce\Calculation\CalculationLine;
 use Selli\Commerce\Cart\CartManager;
 use Selli\Commerce\Cart\Models\Cart;
+use Selli\Commerce\Contracts\RoundingStrategy;
+use Selli\Commerce\Contracts\TaxResolver;
 use Selli\Commerce\Enums\AdjustmentType;
 use Selli\Commerce\Enums\CouponType;
 use Selli\Commerce\Order\Actions\PlaceOrder;
 use Selli\Commerce\Pricing\Models\Coupon;
+use Selli\Commerce\Tax\Calculators\TaxCalculator;
 use Selli\Commerce\Tax\Models\TaxRate;
+use Selli\Commerce\Tax\RateResult;
 use Selli\Commerce\Tests\Fixtures\Product;
 use Selli\Commerce\Tests\Fixtures\TaxableProduct;
 
@@ -105,6 +113,42 @@ it('backs out embedded VAT under reverse charge on inclusive prices', function (
     // The B2B buyer self-accounts; they pay only the 100.00 net, not 122.00.
     expect($calc->grandTotal()->getMinorAmount()->toInt())->toBe(10000)
         ->and($taxAdjustment?->data['reverse_charge'] ?? null)->toBeTrue();
+});
+
+it('does not grant the reverse charge without a VAT number', function (): void {
+    config()->set('commerce.tax.prices_include_tax', false);
+    // reverse_charge asserted but no vat_number → relief must NOT apply.
+    $cart = taxedCart($this->carts, 10000, 1, ['country' => 'IT', 'reverse_charge' => true]);
+
+    // Falls through to normal VAT: 22% of 100.00 = 22.00.
+    expect($this->carts->calculate($cart)->taxTotal()->getMinorAmount()->toInt())->toBe(2200);
+});
+
+it('taxes a line-level discount on its own line, not spread across lines', function (): void {
+    config()->set('commerce.tax.prices_include_tax', false);
+
+    $resolver = new class implements TaxResolver
+    {
+        public function resolve(string $category, array $jurisdiction): ?RateResult
+        {
+            return new RateResult(2200, 'VAT 22%');
+        }
+    };
+
+    $calc = new Calculation('EUR', ['metadata' => ['tax' => ['country' => 'IT']]]);
+    $lineA = new CalculationLine('a', 'product', 'a', 'A', 1, Money::of(100, 'EUR'));
+    $lineA->addAdjustment(new Adjustment(
+        AdjustmentType::Discount, 'Line promo', Money::of(-50, 'EUR'), 'promo',
+    ));
+    $lineB = new CalculationLine('b', 'product', 'b', 'B', 1, Money::of(100, 'EUR'));
+    $calc->addLine($lineA);
+    $calc->addLine($lineB);
+
+    (new TaxCalculator($resolver, app(RoundingStrategy::class)))->apply($calc);
+
+    // Line A net = 50.00 → 11.00 tax; line B net = 100.00 → 22.00 tax = 33.00.
+    // A spread of A's discount across both lines would mis-tax (37.95).
+    expect($calc->taxTotal()->getMinorAmount()->toInt())->toBe(3300);
 });
 
 it('uses the purchasable tax category to pick a reduced rate', function (): void {

@@ -50,8 +50,15 @@ final class MoneyMath
             return [];
         }
 
-        if ($amount->isZero() || array_sum($weights) === 0) {
+        if ($amount->isZero()) {
             return array_fill(0, $count, $amount->multipliedBy(0));
+        }
+
+        // No positive weights to spread across (e.g. every line subtotal is
+        // zero): split equally so a non-zero amount is never silently dropped
+        // and the parts still sum to the whole.
+        if (array_sum($weights) === 0) {
+            $weights = array_fill(0, $count, 1);
         }
 
         return array_values($amount->allocate(...$weights));

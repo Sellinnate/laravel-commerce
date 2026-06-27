@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Selli\Commerce\Tax\Calculators;
 
 use Brick\Math\RoundingMode;
+use Brick\Money\Money;
 use Illuminate\Support\Facades\Config;
 use Selli\Commerce\Calculation\Adjustment;
 use Selli\Commerce\Calculation\Calculation;
@@ -60,9 +61,6 @@ final class TaxCalculator implements Calculator
 
         $relief = $this->relief($tax);
 
-        $discountTotal = $calculation->totalByType(AdjustmentType::Discount)
-            ->plus($calculation->totalByType(AdjustmentType::Promotion));
-
         // Exclusive price under relief: nothing to add — the price is already
         // net; one annotation records why no VAT was charged.
         if ($relief !== null && ! $inclusive) {
@@ -71,9 +69,14 @@ final class TaxCalculator implements Calculator
             return;
         }
 
+        // Only CART-level discounts are spread proportionally across lines; a
+        // line's own discounts reduce that line's base alone. This mirrors how
+        // PlaceOrder freezes per-line discounts, so the tax base always matches
+        // the persisted breakdown even when a custom calculator emits a
+        // line-level discount.
         $lines = $calculation->lines();
         $discountAllocations = MoneyMath::allocate(
-            $discountTotal,
+            $this->cartLevelDiscount($calculation),
             array_map(static fn (CalculationLine $l): int => $l->subtotal()->getMinorAmount()->toInt(), $lines),
         );
 
@@ -85,7 +88,9 @@ final class TaxCalculator implements Calculator
                 continue;
             }
 
-            $net = $line->subtotal()->plus($discountAllocations[$index]);
+            $net = $line->subtotal()
+                ->plus($this->lineOwnDiscount($line))
+                ->plus($discountAllocations[$index]);
 
             if ($net->isNegativeOrZero()) {
                 continue;
@@ -185,11 +190,54 @@ final class TaxCalculator implements Calculator
     }
 
     /**
+     * The B2B intra-EU reverse charge only applies when it is enabled, the
+     * context asserts it, AND a VAT number is present — relief without a VAT
+     * number is never granted, so a bare `reverse_charge: true` cannot zero out
+     * VAT on its own. The host remains responsible for validating that number
+     * (e.g. via VIES) and the buyer's eligibility.
+     *
      * @param  array<array-key, mixed>  $tax
      */
     private function isReverseCharge(array $tax): bool
     {
-        return Config::boolean('commerce.tax.reverse_charge', true) && ($tax['reverse_charge'] ?? null) === true;
+        return Config::boolean('commerce.tax.reverse_charge', true)
+            && ($tax['reverse_charge'] ?? null) === true
+            && is_string($tax['vat_number'] ?? null)
+            && $tax['vat_number'] !== '';
+    }
+
+    /**
+     * Sum of cart-level discount and promotion adjustments (negative). These are
+     * the whole-cart reductions allocated across lines for the tax base.
+     */
+    private function cartLevelDiscount(Calculation $calculation): Money
+    {
+        $total = $calculation->zero();
+
+        foreach ($calculation->adjustments() as $adjustment) {
+            if (in_array($adjustment->type, [AdjustmentType::Discount, AdjustmentType::Promotion], true)) {
+                $total = $total->plus($adjustment->amount);
+            }
+        }
+
+        return $total;
+    }
+
+    /**
+     * Sum of a line's own discount and promotion adjustments (negative), which
+     * reduce only that line's tax base.
+     */
+    private function lineOwnDiscount(CalculationLine $line): Money
+    {
+        $total = $line->subtotal()->multipliedBy(0);
+
+        foreach ($line->adjustments() as $adjustment) {
+            if (in_array($adjustment->type, [AdjustmentType::Discount, AdjustmentType::Promotion], true)) {
+                $total = $total->plus($adjustment->amount);
+            }
+        }
+
+        return $total;
     }
 
     /**

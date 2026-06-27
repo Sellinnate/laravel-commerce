@@ -23,8 +23,10 @@ return new class extends Migration
             $table->char('country', 2);
             $table->string('region')->nullable();
             $table->string('name');
-            // Rate in basis points: 2200 = 22.00%.
-            $table->integer('rate');
+            // Rate in basis points: 2200 = 22.00%. Unsigned so a negative rate
+            // (which would mean negative tax, and divide-by-zero at -10000 in the
+            // inclusive path) can never be stored.
+            $table->unsignedInteger('rate');
             $table->integer('priority')->default(0);
             $table->timestamp('starts_at')->nullable();
             $table->timestamp('ends_at')->nullable();

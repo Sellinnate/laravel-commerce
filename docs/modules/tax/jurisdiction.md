@@ -121,7 +121,7 @@ How the net is reached depends on whether your catalogue prices include tax — 
 
 ## B2B intra-EU reverse charge
 
-For a VAT-registered customer in another EU member state, VAT is shifted to the buyer. When `commerce.tax.reverse_charge` is on **and** the context has `reverse_charge = true`, no VAT is charged by the seller and the `vat_number` is recorded:
+For a VAT-registered customer in another EU member state, VAT is shifted to the buyer. The reverse charge applies only when `commerce.tax.reverse_charge` is on, the context has `reverse_charge = true`, **and** a non-empty `vat_number` is present — a bare `reverse_charge` flag with no VAT number never zeroes VAT. When it applies, no VAT is charged by the seller and the `vat_number` is recorded:
 
 ```php
 $cart->setTaxContext($cart, [
