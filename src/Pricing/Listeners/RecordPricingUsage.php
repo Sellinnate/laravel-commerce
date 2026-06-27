@@ -81,11 +81,12 @@ final class RecordPricingUsage
             return;
         }
 
-        // Usage limits are enforced at application time (CartManager::applyCoupon
-        // → CouponValidator). Here we record the *actual* consumption append-only
-        // and keep usage_count as the source of truth — so a discount that was
-        // honoured on the order is always reflected, never silently dropped.
-        // The row lock serialises increments so none are lost under concurrency.
+        // Limits are re-checked under the coupon row lock. If the coupon is
+        // exhausted by the time the order settles (a concurrent order consumed
+        // the last use after this cart's apply-time check), the discount is
+        // reversed on the order rather than exceeding the cap — the same
+        // reconciliation used for gift-card shortfalls. Recording is idempotent
+        // per order so a replayed event never double-counts.
         DB::transaction(function () use ($order, $couponId, $amount, $currency): void {
             $coupon = $this->scopedToOrderTenant(Coupon::withoutTenantScope(), $order)
                 ->whereKey($couponId)
@@ -96,12 +97,17 @@ final class RecordPricingUsage
                 return;
             }
 
-            // Idempotent per order: a replayed event must not double-count.
             $alreadyRecorded = $coupon->redemptions()
                 ->where('order_id', $order->id)
                 ->exists();
 
             if ($alreadyRecorded) {
+                return;
+            }
+
+            if ($this->couponExhausted($coupon, $order)) {
+                $this->reverseDiscount($order, $amount, $currency);
+
                 return;
             }
 
@@ -117,6 +123,34 @@ final class RecordPricingUsage
                 'currency' => $currency,
             ]);
         });
+    }
+
+    private function couponExhausted(Coupon $coupon, Order $order): bool
+    {
+        if ($coupon->hasReachedGlobalLimit()) {
+            return true;
+        }
+
+        if ($coupon->per_customer_limit === null || $order->customer_id === null) {
+            return false;
+        }
+
+        $count = $coupon->redemptions()
+            ->where('customer_type', $order->customer_type)
+            ->where('customer_id', $order->customer_id)
+            ->count();
+
+        return $count >= $coupon->per_customer_limit;
+    }
+
+    private function reverseDiscount(Order $order, int $amount, string $currency): void
+    {
+        if ($amount <= 0 || $order->grand_total === null) {
+            return;
+        }
+
+        $order->grand_total = $order->grand_total->plus(Money::ofMinor($amount, $currency));
+        $order->save();
     }
 
     /**

@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Brick\Money\Money;
 use Illuminate\Support\Facades\Event;
 use Selli\Commerce\Cart\CartManager;
 use Selli\Commerce\Enums\CouponType;
@@ -16,6 +17,7 @@ use Selli\Commerce\Exceptions\CouponNotFoundException;
 use Selli\Commerce\Exceptions\CouponUsageLimitReachedException;
 use Selli\Commerce\Exceptions\PricingModuleDisabledException;
 use Selli\Commerce\Order\Actions\PlaceOrder;
+use Selli\Commerce\Order\Models\Order;
 use Selli\Commerce\Pricing\Listeners\RecordPricingUsage;
 use Selli\Commerce\Pricing\Models\Coupon;
 use Selli\Commerce\Pricing\Models\CouponRedemption;
@@ -184,6 +186,31 @@ it('carries applied coupon codes when a guest cart merges into a user cart', fun
     // Merged quantity is 2 (1 + 1) → subtotal 2000 → 10% = 200 discount.
     expect($this->carts->coupons($user))->toContain('SAVE10')
         ->and($this->carts->calculate($user)->discountTotal()->getMinorAmount()->toInt())->toBe(-200);
+});
+
+it('reverses a coupon discount when the coupon is exhausted at settlement', function (): void {
+    $coupon = Coupon::factory()->create(['code' => 'ONCE', 'usage_limit' => 1, 'usage_count' => 1]);
+
+    $order = Order::factory()->create([
+        'currency' => 'EUR',
+        'grand_total' => Money::ofMinor(1800, 'EUR'),
+        'metadata' => ['_adjustments' => [[
+            'type' => 'discount',
+            'label' => 'Coupon ONCE',
+            'amount' => -200,
+            'currency' => 'EUR',
+            'source' => 'coupon',
+            'affects_total' => true,
+            'data' => ['code' => 'ONCE', 'coupon_id' => $coupon->id],
+        ]]],
+    ]);
+
+    app(RecordPricingUsage::class)->handle(new OrderPlaced($order));
+
+    // Coupon was already at its limit → discount reversed, no new redemption.
+    expect($order->fresh()->grand_total->getMinorAmount()->toInt())->toBe(2000)
+        ->and($coupon->fresh()->usage_count)->toBe(1)
+        ->and(CouponRedemption::query()->where('coupon_id', $coupon->id)->count())->toBe(0);
 });
 
 it('records coupon usage when the order is placed', function (): void {
