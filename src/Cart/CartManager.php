@@ -302,6 +302,10 @@ final class CartManager
                 )));
             }
 
+            // Carry the pricing segment so segment-specific prices survive the
+            // login merge (the target keeps its own segment if it has one).
+            $this->carryMetadataValue($source, $target, 'segment');
+
             $source->status = CartStatus::Merged;
             $source->save();
 
@@ -472,6 +476,26 @@ final class CartManager
         $metadata = $cart->metadata ?? [];
         $metadata[$key] = $codes;
         $cart->metadata = $metadata;
+    }
+
+    /**
+     * Copy a metadata value from source to target on merge, unless the target
+     * already has its own value for that key.
+     */
+    private function carryMetadataValue(Cart $source, Cart $target, string $key): void
+    {
+        $targetMetadata = $target->metadata ?? [];
+
+        if (array_key_exists($key, $targetMetadata)) {
+            return;
+        }
+
+        $sourceMetadata = $source->metadata ?? [];
+
+        if (array_key_exists($key, $sourceMetadata)) {
+            $targetMetadata[$key] = $sourceMetadata[$key];
+            $target->metadata = $targetMetadata;
+        }
     }
 
     /**

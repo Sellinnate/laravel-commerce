@@ -28,6 +28,7 @@ final class PriceBookResolver implements PriceResolver
     {
         $segment = $this->segment($context);
         $quantity = $this->quantity($context);
+        $tenantId = $this->tenantId($context);
         $now = now();
 
         $candidates = Price::query()
@@ -37,10 +38,14 @@ final class PriceBookResolver implements PriceResolver
             ->where('currency', $currency)
             ->where('min_quantity', '<=', $quantity)
             ->get()
-            ->filter(function (Price $price) use ($currency, $segment, $now): bool {
+            // Match the context tenant explicitly: pricing must follow the
+            // cart's tenant, not whatever (possibly null) tenant context the
+            // caller runs in.
+            ->filter(function (Price $price) use ($currency, $segment, $tenantId, $now): bool {
                 $book = $price->priceBook;
 
                 return $book instanceof PriceBook
+                    && $book->tenant_id === $tenantId
                     && $book->currency === $currency
                     && $book->isValidAt($now)
                     && ($book->segment === null || $book->segment === $segment);
@@ -100,5 +105,15 @@ final class PriceBookResolver implements PriceResolver
         $quantity = $context['quantity'] ?? 1;
 
         return is_int($quantity) && $quantity > 0 ? $quantity : 1;
+    }
+
+    /**
+     * @param  array<string, mixed>  $context
+     */
+    private function tenantId(array $context): ?string
+    {
+        $tenantId = $context['tenant_id'] ?? null;
+
+        return is_string($tenantId) ? $tenantId : null;
     }
 }

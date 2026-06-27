@@ -29,6 +29,16 @@ it('resolves a price from a price book over the purchasable default', function (
     expect(app(PriceResolver::class)->resolve($product, 'EUR')->getMinorAmount()->toInt())->toBe(800);
 });
 
+it('does not use another tenant price book even without an ambient tenant context', function (): void {
+    $product = Product::create(['name' => 'Widget', 'price_cents' => 1000]);
+    // A price book belonging to a different tenant should never win.
+    priceBookWith($product->id, 500, ['tenant_id' => 'other-tenant']);
+
+    // No ambient tenant context, and the resolution context carries no tenant.
+    expect(app(PriceResolver::class)->resolve($product, 'EUR')->getMinorAmount()->toInt())->toBe(1000)
+        ->and(app(PriceResolver::class)->resolve($product, 'EUR', ['tenant_id' => 'other-tenant'])->getMinorAmount()->toInt())->toBe(500);
+});
+
 it('falls back to the purchasable price when no book applies', function (): void {
     $product = Product::create(['name' => 'Widget', 'price_cents' => 1000]);
 
@@ -155,6 +165,25 @@ it('re-prices to a quantity tier when a merge sums across the threshold', functi
 
     // Combined 10 → tier price 700 each.
     expect($carts->calculate($user)->grandTotal()->getMinorAmount()->toInt())->toBe(7000);
+});
+
+it('carries the pricing segment from a guest cart on merge', function (): void {
+    $product = Product::create(['name' => 'Widget', 'price_cents' => 1000]);
+    priceBookWith($product->id, 800);
+    priceBookWith($product->id, 700, ['segment' => 'vip']);
+
+    $carts = app(CartManager::class);
+    $guest = $carts->create('EUR');
+    $guest->metadata = ['segment' => 'vip'];
+    $guest->save();
+    $carts->add($guest, $product, 1);
+
+    $user = $carts->create('EUR');
+
+    $carts->merge($guest, $user);
+
+    expect(($user->metadata ?? [])['segment'] ?? null)->toBe('vip')
+        ->and($carts->recalculate($user)->grandTotal()->getMinorAmount()->toInt())->toBe(700);
 });
 
 it('uses a segment-specific price when the cart carries a segment', function (): void {
