@@ -25,6 +25,7 @@ use Selli\Commerce\Order\Models\Order;
 use Selli\Commerce\Order\Models\OrderLine;
 use Selli\Commerce\Order\Models\OrderStateTransition;
 use Selli\Commerce\Order\States\Pending;
+use Selli\Commerce\Support\MoneyMath;
 
 /**
  * The single transactional conversion of a cart into an order: run the final
@@ -136,8 +137,25 @@ final class PlaceOrder
             $order->metadata = $metadata;
             $order->save();
 
-            foreach ($calculation->lines() as $line) {
-                $this->persistLine($order, $line);
+            // Cart-level discounts (coupons, promotions) are allocated to lines
+            // in proportion to their subtotal so each order line reconciles with
+            // the header totals.
+            $cartDiscount = Money::zero($cart->currency);
+
+            foreach ($calculation->adjustments() as $adjustment) {
+                if (in_array($adjustment->type, [AdjustmentType::Discount, AdjustmentType::Promotion], true)) {
+                    $cartDiscount = $cartDiscount->plus($adjustment->amount);
+                }
+            }
+
+            $lines = $calculation->lines();
+            $allocations = MoneyMath::allocate(
+                $cartDiscount,
+                array_map(static fn (CalculationLine $l): int => $l->subtotal()->getMinorAmount()->toInt(), $lines),
+            );
+
+            foreach ($lines as $index => $line) {
+                $this->persistLine($order, $line, $allocations[$index]);
             }
 
             OrderStateTransition::query()->create([
@@ -191,13 +209,30 @@ final class PlaceOrder
         }
     }
 
-    private function persistLine(Order $order, CalculationLine $line): void
+    private function persistLine(Order $order, CalculationLine $line, Money $allocated): void
     {
         $purchasable = $this->purchasables->resolve($line->purchasableType, $line->purchasableId);
         $snapshot = $purchasable?->getPurchasableData() ?? $line->data;
 
-        $discount = $this->sumLineAdjustments($line, [AdjustmentType::Discount, AdjustmentType::Promotion]);
+        $discount = $this->sumLineAdjustments($line, [AdjustmentType::Discount, AdjustmentType::Promotion])->plus($allocated);
         $tax = $this->sumLineAdjustments($line, [AdjustmentType::Tax]);
+
+        // The breakdown must reconcile with the persisted discount_total, so the
+        // allocated share of cart-level discounts is recorded in discount_detail
+        // alongside the line-level adjustments — not silently folded into totals.
+        $discountDetail = $this->adjustmentsToArray($line, [AdjustmentType::Discount, AdjustmentType::Promotion]);
+
+        if (! $allocated->isZero()) {
+            $discountDetail[] = [
+                'type' => AdjustmentType::Discount->value,
+                'label' => 'Cart discount (allocated)',
+                'amount' => $this->rounding->round($allocated)->getMinorAmount()->toInt(),
+                'currency' => $allocated->getCurrency()->getCurrencyCode(),
+                'source' => 'cart_allocation',
+                'affects_total' => true,
+                'data' => ['allocated' => true],
+            ];
+        }
 
         $order->lines()->save(new OrderLine([
             'purchasable_type' => $line->purchasableType,
@@ -209,10 +244,10 @@ final class PlaceOrder
             'line_subtotal' => $this->rounding->round($line->subtotal()),
             'discount_total' => $this->rounding->round($discount),
             'tax_total' => $this->rounding->round($tax),
-            'line_total' => $this->rounding->round($line->total()),
+            'line_total' => $this->rounding->round($line->total()->plus($allocated)),
             'snapshot' => $snapshot,
             'tax_detail' => $this->adjustmentsToArray($line, [AdjustmentType::Tax]),
-            'discount_detail' => $this->adjustmentsToArray($line, [AdjustmentType::Discount, AdjustmentType::Promotion]),
+            'discount_detail' => $discountDetail,
         ]));
     }
 

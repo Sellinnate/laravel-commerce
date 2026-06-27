@@ -18,6 +18,7 @@ use Selli\Commerce\Contracts\GiftCardValidator;
 use Selli\Commerce\Contracts\PriceResolver;
 use Selli\Commerce\Contracts\Purchasable;
 use Selli\Commerce\Contracts\PurchasableResolver;
+use Selli\Commerce\Contracts\Taxable;
 use Selli\Commerce\Enums\AdjustmentType;
 use Selli\Commerce\Enums\CartStatus;
 use Selli\Commerce\Enums\MergeStrategy;
@@ -113,7 +114,15 @@ final class CartManager
             throw CurrencyMismatchException::between($cart->currency, $resolvedCurrency);
         }
 
-        return DB::transaction(function () use ($cart, $purchasable, $quantity, $options, $metadata, $unitPrice): CartItem {
+        // tax_category is server-determined from the purchasable, never trusted
+        // from caller metadata (which would let a client pick a lower/zero rate
+        // and underpay tax). Strip any supplied value, then set it from the
+        // Taxable purchasable; a non-Taxable purchasable gets no category and
+        // falls back to the (highest) default category.
+        $category = $this->resolveTaxCategory($purchasable);
+        $metadata = $this->applyTaxCategory($metadata, $category);
+
+        return DB::transaction(function () use ($cart, $purchasable, $quantity, $options, $metadata, $unitPrice, $category): CartItem {
             $this->lockActiveCart($cart);
             $cart->load('items');
 
@@ -129,6 +138,13 @@ final class CartManager
                 // quantity-tier price book reflects the merged line, not just
                 // this increment.
                 $existing->unit_price = $this->prices->resolve($purchasable, $cart->currency, $this->context($cart, $newQuantity));
+
+                // Keep the line's frozen tax category authoritatively in sync
+                // with the purchasable on every add: set it when the purchasable
+                // provides one, drop it when it no longer does — so a bump never
+                // leaves a stale reduced/exempt category on the line.
+                $existing->metadata = $this->applyTaxCategory($existing->metadata ?? [], $category);
+
                 $existing->save();
 
                 $cart->load('items');
@@ -180,9 +196,11 @@ final class CartManager
             $item->quantity = $quantity;
 
             // Re-resolve the price for the new quantity so crossing a price-book
-            // quantity tier updates the unit price immediately.
+            // quantity tier updates the unit price immediately, and re-freeze the
+            // tax category so a quantity change never leaves a stale one behind.
             if ($purchasable !== null) {
                 $item->unit_price = $this->prices->resolve($purchasable, $cart->currency, $this->context($cart, $quantity));
+                $item->metadata = $this->applyTaxCategory($item->metadata ?? [], $this->resolveTaxCategory($purchasable));
             }
 
             $item->save();
@@ -260,6 +278,16 @@ final class CartManager
             foreach ($source->items as $sourceItem) {
                 $match = $this->matchLine($target, $sourceItem->purchasable_type, $sourceItem->purchasable_id, $sourceItem->options ?? []);
 
+                // Re-read the live purchasable and re-freeze its tax category, so
+                // the merged line is taxed on the current server determination,
+                // never on a category frozen into the (older) guest line. This is
+                // the same authoritative rule as add/setQuantity/recalculate: a
+                // purchasable that no longer resolves as Taxable drops the
+                // category rather than carrying a stale one forward.
+                $sourceMetadata = $sourceItem->metadata ?? [];
+                $purchasable = $this->purchasables->resolve($sourceItem->purchasable_type, $sourceItem->purchasable_id);
+                $category = $this->resolveTaxCategory($purchasable);
+
                 if ($match === null) {
                     $this->assertAvailableForMerge($sourceItem, $sourceItem->quantity);
 
@@ -270,7 +298,7 @@ final class CartManager
                         'quantity' => $sourceItem->quantity,
                         'unit_price' => $this->mergedUnitPrice($target, $sourceItem, $sourceItem->quantity),
                         'options' => $sourceItem->options ?? [],
-                        'metadata' => $sourceItem->metadata ?? [],
+                        'metadata' => $this->applyTaxCategory($sourceMetadata, $category),
                     ]);
 
                     // Keep the in-memory collection in sync so a later source
@@ -291,6 +319,7 @@ final class CartManager
 
                 $match->quantity = $newQuantity;
                 $match->unit_price = $this->mergedUnitPrice($target, $match, $newQuantity);
+                $match->metadata = $this->applyTaxCategory($match->metadata ?? [], $category);
                 $match->save();
             }
 
@@ -302,9 +331,11 @@ final class CartManager
                 )));
             }
 
-            // Carry the pricing segment so segment-specific prices survive the
-            // login merge (the target keeps its own segment if it has one).
+            // Carry the pricing segment and tax context so segment-specific
+            // prices and the tax jurisdiction survive the login merge (the
+            // target keeps its own value if it already has one).
             $this->carryMetadataValue($source, $target, 'segment');
+            $this->carryMetadataValue($source, $target, 'tax');
 
             $source->status = CartStatus::Merged;
             $source->save();
@@ -326,7 +357,8 @@ final class CartManager
     }
 
     /**
-     * Re-resolve live unit prices for every line, persist, then calculate.
+     * Re-resolve live unit prices (and the frozen tax category) for every line,
+     * persist, then calculate.
      */
     public function recalculate(Cart $cart): Calculation
     {
@@ -344,6 +376,9 @@ final class CartManager
                 }
 
                 $item->unit_price = $this->prices->resolve($purchasable, $cart->currency, $this->context($cart, $item->quantity));
+                // Re-freeze the tax category too, so a recalculation before
+                // checkout never taxes a line on a stale category.
+                $item->metadata = $this->applyTaxCategory($item->metadata ?? [], $this->resolveTaxCategory($purchasable));
                 $item->save();
             }
 
@@ -414,6 +449,38 @@ final class CartManager
     public function removeGiftCard(Cart $cart, string $code): void
     {
         $this->removeCode($cart, 'gift_cards', $code);
+    }
+
+    /**
+     * Set the cart's tax context (jurisdiction and B2B / exemption flags) used
+     * by the tax calculator: country, region, exempt, exempt_reason, b2b,
+     * vat_number, reverse_charge.
+     *
+     * @param  array<string, mixed>  $context
+     */
+    public function setTaxContext(Cart $cart, array $context): void
+    {
+        $this->assertMutable($cart);
+
+        DB::transaction(function () use ($cart, $context): void {
+            $this->lockActiveCart($cart);
+
+            $metadata = $cart->metadata ?? [];
+            $metadata['tax'] = $context;
+            $cart->metadata = $metadata;
+
+            $this->touch($cart);
+        });
+    }
+
+    /**
+     * @return array<array-key, mixed>
+     */
+    public function taxContext(Cart $cart): array
+    {
+        $tax = ($cart->metadata ?? [])['tax'] ?? [];
+
+        return is_array($tax) ? $tax : [];
     }
 
     /**
@@ -496,6 +563,43 @@ final class CartManager
             $targetMetadata[$key] = $sourceMetadata[$key];
             $target->metadata = $targetMetadata;
         }
+    }
+
+    /**
+     * The server-authoritative tax category for a purchasable, or null when it
+     * provides none. Never trusts caller-supplied metadata, so a client cannot
+     * select a lower or zero rate. A null/unresolvable purchasable yields null
+     * (the line falls back to the default category at tax time).
+     */
+    private function resolveTaxCategory(?Purchasable $purchasable): ?string
+    {
+        if ($purchasable instanceof Taxable) {
+            $category = $purchasable->getTaxCategory();
+
+            return is_string($category) && $category !== '' ? $category : null;
+        }
+
+        return null;
+    }
+
+    /**
+     * Authoritatively (re)write the frozen tax_category on a metadata array so
+     * it always mirrors the current server determination: set it when a category
+     * is given, drop any previously frozen value when it is null. Returning a new
+     * array keeps callers from leaving stale categories behind.
+     *
+     * @param  array<string, mixed>  $metadata
+     * @return array<string, mixed>
+     */
+    private function applyTaxCategory(array $metadata, ?string $category): array
+    {
+        unset($metadata['tax_category']);
+
+        if ($category !== null) {
+            $metadata['tax_category'] = $category;
+        }
+
+        return $metadata;
     }
 
     /**
