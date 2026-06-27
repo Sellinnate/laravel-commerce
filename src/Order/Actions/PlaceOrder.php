@@ -136,11 +136,32 @@ final class PlaceOrder
 
     private function assertLinesAvailable(Cart $cart): void
     {
-        foreach ($cart->items as $item) {
-            $purchasable = $this->purchasables->resolve($item->purchasable_type, $item->purchasable_id);
+        // Aggregate quantity per purchasable across all lines (including
+        // separate option-lines) so availability reflects the total claimed on
+        // shared inventory, consistent with CartManager's checks.
+        /** @var array<string, array{type: string, id: string, name: string, quantity: int}> $totals */
+        $totals = [];
 
-            if ($purchasable !== null && ! $purchasable->isAvailable($item->quantity)) {
-                throw ProductNotAvailableException::for($item->name, $item->quantity);
+        foreach ($cart->items as $item) {
+            $key = $item->purchasable_type.'|'.$item->purchasable_id;
+
+            if (! isset($totals[$key])) {
+                $totals[$key] = [
+                    'type' => $item->purchasable_type,
+                    'id' => $item->purchasable_id,
+                    'name' => $item->name,
+                    'quantity' => 0,
+                ];
+            }
+
+            $totals[$key]['quantity'] += $item->quantity;
+        }
+
+        foreach ($totals as $total) {
+            $purchasable = $this->purchasables->resolve($total['type'], $total['id']);
+
+            if ($purchasable !== null && ! $purchasable->isAvailable($total['quantity'])) {
+                throw ProductNotAvailableException::for($total['name'], $total['quantity']);
             }
         }
     }

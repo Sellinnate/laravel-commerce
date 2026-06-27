@@ -59,6 +59,18 @@ it('allows the same order number across different tenants', function (): void {
         ->and($b->tenant_id)->toBe('tenant-b');
 });
 
+it('aggregates quantity across option-lines when validating stock at placement', function (): void {
+    $product = Product::create(['name' => 'Shirt', 'price_cents' => 2000, 'stock' => 4]);
+    $cart = $this->carts->create('EUR');
+    $this->carts->add($cart, $product, 2, ['size' => 'L']);
+    $this->carts->add($cart, $product, 2, ['size' => 'M']);
+
+    // Total 4 fits; now stock drops to 3 and placement must reject the total.
+    $product->update(['stock' => 3]);
+
+    $this->place->handle($cart);
+})->throws(ProductNotAvailableException::class);
+
 it('re-validates stock at place-order time', function (): void {
     $product = Product::create(['name' => 'Widget', 'price_cents' => 1000, 'stock' => 5]);
     $cart = $this->carts->create('EUR');
