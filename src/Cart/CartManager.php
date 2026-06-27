@@ -7,6 +7,7 @@ namespace Selli\Commerce\Cart;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\DB;
 use Selli\Commerce\Calculation\Calculation;
 use Selli\Commerce\Cart\Models\Cart;
 use Selli\Commerce\Cart\Models\CartItem;
@@ -22,6 +23,7 @@ use Selli\Commerce\Events\Cart\CartMerged;
 use Selli\Commerce\Events\Cart\ItemAddedToCart;
 use Selli\Commerce\Events\Cart\ItemRemovedFromCart;
 use Selli\Commerce\Events\Cart\ItemUpdatedInCart;
+use Selli\Commerce\Exceptions\CartItemMismatchException;
 use Selli\Commerce\Exceptions\CartNotMutableException;
 use Selli\Commerce\Exceptions\CurrencyMismatchException;
 use Selli\Commerce\Exceptions\InvalidQuantityException;
@@ -134,6 +136,7 @@ final class CartManager
     public function setQuantity(Cart $cart, CartItem $item, int $quantity): CartItem
     {
         $this->assertMutable($cart);
+        $this->assertBelongsToCart($cart, $item);
         $this->assertQuantity($quantity);
 
         $purchasable = $this->purchasables->resolve($item->purchasable_type, $item->purchasable_id);
@@ -154,6 +157,7 @@ final class CartManager
     public function remove(Cart $cart, CartItem $item): void
     {
         $this->assertMutable($cart);
+        $this->assertBelongsToCart($cart, $item);
 
         $item->delete();
         $cart->load('items');
@@ -182,45 +186,59 @@ final class CartManager
         $this->assertMutable($source);
         $this->assertMutable($target);
 
+        if ($source->is($target)) {
+            return $target;
+        }
+
         if ($source->currency !== $target->currency) {
             throw CurrencyMismatchException::between($target->currency, $source->currency);
         }
 
         $strategy ??= $this->defaultMergeStrategy();
 
-        foreach ($source->items as $sourceItem) {
-            $match = $this->matchLine($target, $sourceItem->purchasable_type, $sourceItem->purchasable_id, $sourceItem->options ?? []);
+        // The whole merge is atomic: a stock violation on any line rolls the
+        // entire operation back, so login/retry flows never leave a half-merge.
+        return DB::transaction(function () use ($source, $target, $strategy): Cart {
+            foreach ($source->items as $sourceItem) {
+                $match = $this->matchLine($target, $sourceItem->purchasable_type, $sourceItem->purchasable_id, $sourceItem->options ?? []);
 
-            if ($match === null) {
-                $target->items()->create([
-                    'purchasable_type' => $sourceItem->purchasable_type,
-                    'purchasable_id' => $sourceItem->purchasable_id,
-                    'name' => $sourceItem->name,
-                    'quantity' => $sourceItem->quantity,
-                    'unit_price' => $sourceItem->unit_price,
-                    'options' => $sourceItem->options ?? [],
-                    'metadata' => $sourceItem->metadata ?? [],
-                ]);
+                if ($match === null) {
+                    $this->assertAvailableForMerge($sourceItem, $sourceItem->quantity);
 
-                continue;
+                    $target->items()->create([
+                        'purchasable_type' => $sourceItem->purchasable_type,
+                        'purchasable_id' => $sourceItem->purchasable_id,
+                        'name' => $sourceItem->name,
+                        'quantity' => $sourceItem->quantity,
+                        'unit_price' => $sourceItem->unit_price,
+                        'options' => $sourceItem->options ?? [],
+                        'metadata' => $sourceItem->metadata ?? [],
+                    ]);
+
+                    continue;
+                }
+
+                $newQuantity = match ($strategy) {
+                    MergeStrategy::Sum => $match->quantity + $sourceItem->quantity,
+                    MergeStrategy::KeepHighestQuantity => max($match->quantity, $sourceItem->quantity),
+                    MergeStrategy::Replace => $sourceItem->quantity,
+                };
+
+                $this->assertAvailableForMerge($sourceItem, $newQuantity);
+
+                $match->quantity = $newQuantity;
+                $match->save();
             }
 
-            $match->quantity = match ($strategy) {
-                MergeStrategy::Sum => $match->quantity + $sourceItem->quantity,
-                MergeStrategy::KeepHighestQuantity => max($match->quantity, $sourceItem->quantity),
-                MergeStrategy::Replace => $sourceItem->quantity,
-            };
-            $match->save();
-        }
+            $source->status = CartStatus::Merged;
+            $source->save();
 
-        $source->status = CartStatus::Merged;
-        $source->save();
+            $target->load('items');
+            $this->touch($target);
+            $this->events->dispatch(new CartMerged($target, $source));
 
-        $target->load('items');
-        $this->touch($target);
-        $this->events->dispatch(new CartMerged($target, $source));
-
-        return $target;
+            return $target;
+        });
     }
 
     /**
@@ -322,6 +340,26 @@ final class CartManager
     {
         if (! $cart->isMutable()) {
             throw CartNotMutableException::inStatus($cart->status);
+        }
+    }
+
+    private function assertBelongsToCart(Cart $cart, CartItem $item): void
+    {
+        if ((string) $item->cart_id !== (string) $cart->id) {
+            throw CartItemMismatchException::notInCart($item->id, $cart->id);
+        }
+    }
+
+    /**
+     * Throw if a live purchasable cannot satisfy the post-merge quantity.
+     * Unresolvable purchasables (catalogue removed) are skipped.
+     */
+    private function assertAvailableForMerge(CartItem $item, int $quantity): void
+    {
+        $purchasable = $this->purchasables->resolve($item->purchasable_type, $item->purchasable_id);
+
+        if ($purchasable !== null && ! $purchasable->isAvailable($quantity)) {
+            throw ProductNotAvailableException::for($item->name, $quantity);
         }
     }
 

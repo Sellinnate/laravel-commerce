@@ -44,10 +44,12 @@ return [
     |--------------------------------------------------------------------------
     */
     'cart' => [
-        // Storage driver: "database", "session" or "cache".
+        // Storage driver. "database" is bundled (persistent, multi-device).
+        // For session or cache/redis storage, implement the CartRepository
+        // contract and bind it via the "bindings" map below.
         'driver' => env('COMMERCE_CART_DRIVER', 'database'),
 
-        // Cache store used by the "cache" driver.
+        // Cache store used by a custom cache-backed CartRepository.
         'cache_store' => env('COMMERCE_CART_CACHE_STORE', null),
 
         // Minutes of inactivity before a cart is considered abandoned/expired.

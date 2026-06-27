@@ -7,8 +7,10 @@ namespace Selli\Commerce;
 use Brick\Math\RoundingMode;
 use Closure;
 use Illuminate\Database\Eloquent\Relations\Relation;
+use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
+use InvalidArgumentException;
 use Selli\Commerce\Audit\Contracts\Recordable;
 use Selli\Commerce\Audit\Models\DomainEvent;
 use Selli\Commerce\Audit\RecordDomainEvents;
@@ -136,8 +138,14 @@ final class CommerceServiceProvider extends PackageServiceProvider
                 return $this->app->make($override);
             }
 
-            return match (config('commerce.cart.driver', 'database')) {
-                default => $this->app->make(DatabaseCartRepository::class),
+            $driver = Config::string('commerce.cart.driver', 'database');
+
+            return match ($driver) {
+                'database' => $this->app->make(DatabaseCartRepository::class),
+                default => throw new InvalidArgumentException(
+                    "Unsupported cart driver [{$driver}]. The \"database\" driver is bundled; ".
+                    'for session or cache storage bind a custom CartRepository via commerce.bindings.'
+                ),
             };
         });
     }
