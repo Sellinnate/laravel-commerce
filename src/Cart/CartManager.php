@@ -280,15 +280,13 @@ final class CartManager
 
                 // Re-read the live purchasable and re-freeze its tax category, so
                 // the merged line is taxed on the current server determination,
-                // never on a category frozen into the (older) guest line. When the
-                // purchasable can no longer be resolved as Taxable, fall back to
-                // the source line's frozen category rather than silently dropping
-                // it (a lean resolver must not lose pricing state on merge).
+                // never on a category frozen into the (older) guest line. This is
+                // the same authoritative rule as add/setQuantity/recalculate: a
+                // purchasable that no longer resolves as Taxable drops the
+                // category rather than carrying a stale one forward.
                 $sourceMetadata = $sourceItem->metadata ?? [];
                 $purchasable = $this->purchasables->resolve($sourceItem->purchasable_type, $sourceItem->purchasable_id);
-                $category = $purchasable instanceof Taxable
-                    ? $this->resolveTaxCategory($purchasable)
-                    : (is_string($sourceMetadata['tax_category'] ?? null) ? $sourceMetadata['tax_category'] : null);
+                $category = $this->resolveTaxCategory($purchasable);
 
                 if ($match === null) {
                     $this->assertAvailableForMerge($sourceItem, $sourceItem->quantity);
