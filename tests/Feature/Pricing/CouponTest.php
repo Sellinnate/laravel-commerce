@@ -90,6 +90,12 @@ it('rejects a fixed coupon in a different currency', function (): void {
     $this->carts->applyCoupon($cart, 'USD5');
 })->throws(CouponCurrencyMismatchException::class);
 
+it('rejects a coupon whose minimum is in a different currency', function (): void {
+    Coupon::factory()->create(['code' => 'MINUSD', 'min_amount' => 100, 'min_amount_currency' => 'USD']);
+    [$cart] = cartWith($this->carts, 1000);
+    $this->carts->applyCoupon($cart, 'MINUSD');
+})->throws(CouponCurrencyMismatchException::class);
+
 it('emits CouponApplied and CouponRejected events', function (): void {
     Event::fake([CouponApplied::class, CouponRejected::class]);
     $carts = app(CartManager::class);

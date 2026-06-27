@@ -116,7 +116,20 @@ final class DatabaseCouponValidator implements CouponValidator
         $minimum = $coupon->minimumAmount();
         $subtotal = $context['subtotal'] ?? null;
 
-        if ($minimum !== null && $subtotal instanceof Money && $subtotal->isLessThan($minimum)) {
+        if ($minimum === null || ! $subtotal instanceof Money) {
+            return;
+        }
+
+        // Guard the currency explicitly so a misconfigured minimum in another
+        // currency yields a typed coupon rejection, not a low-level Money error.
+        if ($minimum->getCurrency()->getCurrencyCode() !== $subtotal->getCurrency()->getCurrencyCode()) {
+            throw CouponCurrencyMismatchException::between(
+                $minimum->getCurrency()->getCurrencyCode(),
+                $subtotal->getCurrency()->getCurrencyCode(),
+            );
+        }
+
+        if ($subtotal->isLessThan($minimum)) {
             throw CouponMinimumNotMetException::for($code, $minimum);
         }
     }
