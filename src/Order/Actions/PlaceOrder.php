@@ -118,16 +118,23 @@ final class PlaceOrder
 
             // Freeze the cart-level adjustments (coupons, promotions, gift
             // cards, fees) onto the order so listeners can record their usage
-            // and the order keeps an explainable breakdown.
+            // and the order keeps an explainable breakdown. `_adjustments` is a
+            // server-owned key: any caller-supplied value is stripped so a
+            // checkout cannot inject redemptions against other records.
             $adjustments = array_map(
                 static fn (Adjustment $adjustment): array => $adjustment->toArray(),
                 $calculation->adjustments(),
             );
 
+            $metadata = $order->metadata ?? [];
+            unset($metadata['_adjustments']);
+
             if ($adjustments !== []) {
-                $order->metadata = array_merge($order->metadata ?? [], ['_adjustments' => $adjustments]);
-                $order->save();
+                $metadata['_adjustments'] = $adjustments;
             }
+
+            $order->metadata = $metadata;
+            $order->save();
 
             foreach ($calculation->lines() as $line) {
                 $this->persistLine($order, $line);
