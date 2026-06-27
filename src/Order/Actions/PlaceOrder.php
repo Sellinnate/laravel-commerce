@@ -63,8 +63,12 @@ final class PlaceOrder
                 ->lockForUpdate()
                 ->first();
 
-            if ($locked === null || $locked->status !== CartStatus::Active) {
-                throw CartNotMutableException::inStatus($locked->status ?? $cart->status);
+            if ($locked === null) {
+                throw CartNotMutableException::inStatus($cart->status);
+            }
+
+            if ($locked->status !== CartStatus::Active) {
+                throw CartNotMutableException::inStatus($locked->status);
             }
 
             $cart->load('items');

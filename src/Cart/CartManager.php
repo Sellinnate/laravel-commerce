@@ -265,6 +265,8 @@ final class CartManager
      */
     public function recalculate(Cart $cart): Calculation
     {
+        $this->assertMutable($cart);
+
         foreach ($cart->items as $item) {
             $purchasable = $this->purchasables->resolve($item->purchasable_type, $item->purchasable_id);
 
