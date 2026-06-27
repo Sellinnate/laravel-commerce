@@ -16,6 +16,7 @@ use Selli\Commerce\Contracts\RoundingStrategy;
 use Selli\Commerce\Enums\AdjustmentType;
 use Selli\Commerce\Enums\CartStatus;
 use Selli\Commerce\Events\Order\OrderPlaced;
+use Selli\Commerce\Exceptions\CartNotFoundException;
 use Selli\Commerce\Exceptions\CartNotMutableException;
 use Selli\Commerce\Exceptions\EmptyCartException;
 use Selli\Commerce\Exceptions\ProductNotAvailableException;
@@ -64,7 +65,7 @@ final class PlaceOrder
                 ->first();
 
             if ($locked === null) {
-                throw CartNotMutableException::inStatus($cart->status);
+                throw CartNotFoundException::forPlacement($cart->id);
             }
 
             if ($locked->status !== CartStatus::Active) {
@@ -79,10 +80,14 @@ final class PlaceOrder
 
             $calculation = $this->carts->calculate($cart);
 
+            // Caller attributes (addresses, metadata, customer) are applied
+            // first; tenant, currency, totals, number and state are computed
+            // authoritatively and can never be overridden by the caller.
             $order = new Order(array_merge([
-                'tenant_id' => $cart->tenant_id,
                 'customer_type' => $cart->owner_type,
                 'customer_id' => $cart->owner_id,
+            ], $attributes, [
+                'tenant_id' => $cart->tenant_id,
                 'currency' => $cart->currency,
                 'subtotal' => $this->rounding->round($calculation->itemsSubtotal()),
                 'discount_total' => $this->rounding->round($calculation->discountTotal()),
@@ -90,7 +95,7 @@ final class PlaceOrder
                 'shipping_total' => $this->rounding->round($calculation->shippingTotal()),
                 'grand_total' => $calculation->grandTotal(),
                 'placed_at' => now(),
-            ], $attributes));
+            ]));
 
             $order->number = $this->numbers->generate($cart->tenant_id);
             $order->state = new Pending($order);
