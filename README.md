@@ -1,93 +1,105 @@
-# :package_description
+# Laravel Commerce
 
-[![Latest Version on Packagist](https://img.shields.io/packagist/v/:vendor_slug/:package_slug.svg?style=flat-square)](https://packagist.org/packages/:vendor_slug/:package_slug)
-[![GitHub Tests Action Status](https://github.com/spatie/package-skeleton-laravel/actions/workflows/run-tests.yml/badge.svg)](https://github.com/:vendor_slug/:package_slug/actions?query=workflow%3Arun-tests+branch%3Amain)
-[![GitHub Code Style Action Status](https://github.com/spatie/package-skeleton-laravel/actions/workflows/fix-php-code-style-issues.yml/badge.svg)](https://github.com/:vendor_slug/:package_slug/actions?query=workflow%3A"Fix+PHP+code+style+issues"+branch%3Amain)
-[![Total Downloads](https://img.shields.io/packagist/dt/:vendor_slug/:package_slug.svg?style=flat-square)](https://packagist.org/packages/:vendor_slug/:package_slug)
-<!--delete-->
----
-This repo can be used to scaffold a Laravel package. Follow these steps to get started:
+[![Tests](https://github.com/sellinnate/laravel-commerce/actions/workflows/run-tests.yml/badge.svg)](https://github.com/sellinnate/laravel-commerce/actions/workflows/run-tests.yml)
+[![PHPStan](https://github.com/sellinnate/laravel-commerce/actions/workflows/phpstan.yml/badge.svg)](https://github.com/sellinnate/laravel-commerce/actions/workflows/phpstan.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
 
-1. Press the "Use this template" button at the top of this repo to create a new repo with the contents of this skeleton.
-2. Run "php ./configure.php" to run a script that will replace all placeholders throughout all the files.
-3. Have fun creating your package.
-4. If you need help creating a package, consider picking up our <a href="https://laravelpackage.training">Laravel Package Training</a> video course.
----
-<!--/delete-->
-This is where your description should go. Limit it to a paragraph or two. Consider adding a small example.
+A **headless, catalog-agnostic commerce domain engine for Laravel**: cart, order lifecycle, a
+deterministic pricing pipeline, multi-tenancy, multi-currency, an immutable audit trail and ACL —
+the transactional heart you build stores, checkouts, booking systems and quote flows on top of.
 
-## Support us
+It is **not** a turnkey store. It owns the parts of commerce that are hard to get right and identical
+across projects — money, order states, the calculation pipeline — and nothing else. Your catalogue
+stays yours: anything implementing the `Purchasable` contract becomes sellable.
 
-[<img src="https://github-ads.s3.eu-central-1.amazonaws.com/:package_name.jpg?t=1" width="419px" />](https://spatie.be/github-ad-click/:package_name)
+> 📚 **Full documentation:** <https://laravel-commerce.selli.io>
 
-We invest a lot of resources into creating [best in class open source packages](https://spatie.be/open-source). You can support us by [buying one of our paid products](https://spatie.be/open-source/support-us).
+## Why
 
-We highly appreciate you sending us a postcard from your hometown, mentioning which of our package(s) you are using. You'll find our address on [our contact page](https://spatie.be/about-us). We publish all received postcards on [our virtual postcard wall](https://spatie.be/open-source/postcards).
+Every commercial app re-writes cart, totals, discounts, VAT and order states — and re-introduces the
+same bugs (rounding, inclusive/exclusive tax, stock race conditions) project after project. Laravel
+Commerce is **one engine, tested to the bone, reused across N projects**.
+
+## Highlights
+
+- **Catalog-agnostic** — binds to your models via the `Purchasable` contract; freezes an immutable
+  order snapshot so history never changes when your catalogue does.
+- **Headless & unopinionated** — no routes, controllers or templates imposed. Pure service layer + events.
+- **Money correct by construction** — `brick/money` in minor units, never a float; centralised,
+  per-currency rounding.
+- **Deterministic calculation pipeline** — an explainable, line-by-line breakdown; reorderable and
+  extensible without touching the core.
+- **Order state machine** — `spatie/laravel-model-states`; illegal transitions are impossible by
+  construction, authorised by policy and logged append-only.
+- **Multi-tenant & multi-currency** — `tenant_id` + global scope on every table; one engine serves
+  single-tenant and SaaS alike.
+- **Audited** — every domain event persisted append-only; optional event sourcing for the Order
+  aggregate.
+
+## Requirements
+
+- PHP 8.3+ (8.3 / 8.4 / 8.5)
+- Laravel 12 or 13
 
 ## Installation
 
-You can install the package via composer:
-
 ```bash
-composer require :vendor_slug/:package_slug
-```
-
-You can publish and run the migrations with:
-
-```bash
-php artisan vendor:publish --tag=":package_slug-migrations"
+composer require selli/commerce
+php artisan vendor:publish --tag="commerce-migrations"
 php artisan migrate
 ```
 
-You can publish the config file with:
-
-```bash
-php artisan vendor:publish --tag=":package_slug-config"
-```
-
-This is the contents of the published config file:
+## Quick start
 
 ```php
-return [
-];
+use Selli\Commerce\Cart\CartManager;
+use Selli\Commerce\Order\Actions\PlaceOrder;
+use Selli\Commerce\Order\Actions\TransitionOrderState;
+use Selli\Commerce\Order\States\Confirmed;
+
+$carts = app(CartManager::class);
+
+$cart = $carts->forOwner('user', (string) $user->id, 'EUR');
+$carts->add($cart, $product, quantity: 2, options: ['size' => 'L']);
+
+$calculation = $carts->calculate($cart);   // deterministic, explainable
+$calculation->grandTotal();                 // Brick\Money\Money
+$calculation->breakdown();                  // subtotal, discounts, tax, lines
+
+$order = app(PlaceOrder::class)->handle($cart);   // transactional, emits OrderPlaced
+$order->state;                                     // Pending
+
+app(TransitionOrderState::class)->handle($order, Confirmed::class, by: $agent, reason: 'payment ok');
 ```
 
-Optionally, you can publish the views using
+See the [Quick Start guide](https://laravel-commerce.selli.io/getting-started/quick-start) for the
+full walkthrough, including implementing `Purchasable` on your model.
+
+## Documentation
+
+The documentation site is built with [docmd](https://github.com/mgks/docmd):
 
 ```bash
-php artisan vendor:publish --tag=":package_slug-views"
-```
-
-## Usage
-
-```php
-$:variable = new VendorName\Skeleton();
-echo $:variable->echoPhrase('Hello, VendorName!');
+npm install
+npm run docs:build   # outputs to ./site
+npm run docs:dev     # local preview
 ```
 
 ## Testing
 
 ```bash
-composer test
+composer test            # Pest suite
+composer test-coverage   # with 90% minimum coverage gate
+composer analyse         # PHPStan (max level)
+composer format          # Pint
 ```
 
-## Changelog
+## Roadmap
 
-Please see [CHANGELOG](CHANGELOG.md) for more information on what has changed recently.
-
-## Contributing
-
-Please see [CONTRIBUTING](CONTRIBUTING.md) for details.
-
-## Security Vulnerabilities
-
-Please review [our security policy](../../security/policy) on how to report security vulnerabilities.
-
-## Credits
-
-- [:author_name](https://github.com/:author_username)
-- [All Contributors](../../contributors)
+The core (cart, order, calculation pipeline, multi-tenancy, multi-currency, audit, ACL) ships first.
+Pricing & Promotions, Tax and Inventory are modular and land in subsequent releases, followed by
+Payments orchestration, Fulfillment and optional REST/GraphQL/Filament surfaces.
 
 ## License
 
-The MIT License (MIT). Please see [License File](LICENSE.md) for more information.
+The MIT License (MIT). See [License File](LICENSE.md).
