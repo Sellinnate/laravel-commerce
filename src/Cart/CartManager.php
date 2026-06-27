@@ -196,9 +196,11 @@ final class CartManager
             $item->quantity = $quantity;
 
             // Re-resolve the price for the new quantity so crossing a price-book
-            // quantity tier updates the unit price immediately.
+            // quantity tier updates the unit price immediately, and re-freeze the
+            // tax category so a quantity change never leaves a stale one behind.
             if ($purchasable !== null) {
                 $item->unit_price = $this->prices->resolve($purchasable, $cart->currency, $this->context($cart, $quantity));
+                $item->metadata = $this->applyTaxCategory($item->metadata ?? [], $this->resolveTaxCategory($purchasable));
             }
 
             $item->save();
@@ -357,7 +359,8 @@ final class CartManager
     }
 
     /**
-     * Re-resolve live unit prices for every line, persist, then calculate.
+     * Re-resolve live unit prices (and the frozen tax category) for every line,
+     * persist, then calculate.
      */
     public function recalculate(Cart $cart): Calculation
     {
@@ -375,6 +378,9 @@ final class CartManager
                 }
 
                 $item->unit_price = $this->prices->resolve($purchasable, $cart->currency, $this->context($cart, $item->quantity));
+                // Re-freeze the tax category too, so a recalculation before
+                // checkout never taxes a line on a stale category.
+                $item->metadata = $this->applyTaxCategory($item->metadata ?? [], $this->resolveTaxCategory($purchasable));
                 $item->save();
             }
 

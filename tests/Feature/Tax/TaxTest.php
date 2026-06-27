@@ -153,11 +153,17 @@ it('allocates cart-level discounts to lines so they reconcile with the order tot
     $order = app(PlaceOrder::class)->handle($cart);
 
     // 2 × 100.00 = 200.00 net; −10% coupon = 180.00; +22% tax = 39.60 → 219.60.
+    $line = $order->lines->first();
     $lineTotalSum = $order->lines->sum(fn ($l) => $l->line_total->getMinorAmount()->toInt());
+    $detailSum = collect($line->discount_detail)->sum('amount');
 
     expect($order->grand_total->getMinorAmount()->toInt())->toBe(21960)
         ->and($lineTotalSum)->toBe(21960)
-        ->and($order->lines->first()->discount_total->getMinorAmount()->toInt())->toBe(-2000);
+        ->and($line->discount_total->getMinorAmount()->toInt())->toBe(-2000)
+        // The allocated cart discount is recorded in the detail and reconciles
+        // with discount_total, not silently folded into the totals.
+        ->and($detailSum)->toBe(-2000)
+        ->and(collect($line->discount_detail)->firstWhere('source', 'cart_allocation'))->not->toBeNull();
 });
 
 it('distributes the allocation remainder so multi-line totals reconcile exactly', function (): void {
@@ -231,6 +237,37 @@ it('drops a stale tax category when the purchasable no longer provides one', fun
     // 2 × 100.00 = 200.00 net at standard 22% → 44.00 (not the reduced 20.00).
     expect($item->fresh()->metadata['tax_category'] ?? null)->toBeNull()
         ->and($this->carts->calculate($cart)->taxTotal()->getMinorAmount()->toInt())->toBe(4400);
+});
+
+it('re-freezes the tax category when changing a line quantity', function (): void {
+    config()->set('commerce.tax.prices_include_tax', false);
+    TaxRate::factory()->create(['category' => 'standard', 'country' => 'IT', 'rate' => 2200, 'name' => 'VAT 22%']);
+    TaxRate::factory()->create(['category' => 'reduced', 'country' => 'IT', 'rate' => 1000, 'name' => 'VAT 10%']);
+
+    $product = TaxableProduct::create(['name' => 'Book', 'price_cents' => 5000, 'tax_category' => 'reduced']);
+    $cart = $this->carts->create('EUR');
+    $item = $this->carts->add($cart, $product, 1);
+
+    $product->update(['tax_category' => 'standard']);
+    $this->carts->setQuantity($cart, $item, 2);
+
+    expect($item->fresh()->metadata['tax_category'] ?? null)->toBe('standard');
+});
+
+it('re-freezes the tax category on recalculate before checkout', function (): void {
+    config()->set('commerce.tax.prices_include_tax', false);
+    TaxRate::factory()->create(['category' => 'standard', 'country' => 'IT', 'rate' => 2200, 'name' => 'VAT 22%']);
+    TaxRate::factory()->create(['category' => 'reduced', 'country' => 'IT', 'rate' => 1000, 'name' => 'VAT 10%']);
+
+    $product = TaxableProduct::create(['name' => 'Book', 'price_cents' => 10000, 'tax_category' => 'reduced']);
+    $cart = $this->carts->create('EUR');
+    $this->carts->add($cart, $product, 1);
+    $this->carts->setTaxContext($cart, ['country' => 'IT']);
+
+    $product->update(['tax_category' => 'standard']);
+
+    // Recalculate must re-freeze the category → standard 22% (22.00), not 10%.
+    expect($this->carts->recalculate($cart)->taxTotal()->getMinorAmount()->toInt())->toBe(2200);
 });
 
 it('re-resolves the tax category from the live purchasable on merge', function (): void {

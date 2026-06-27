@@ -217,6 +217,23 @@ final class PlaceOrder
         $discount = $this->sumLineAdjustments($line, [AdjustmentType::Discount, AdjustmentType::Promotion])->plus($allocated);
         $tax = $this->sumLineAdjustments($line, [AdjustmentType::Tax]);
 
+        // The breakdown must reconcile with the persisted discount_total, so the
+        // allocated share of cart-level discounts is recorded in discount_detail
+        // alongside the line-level adjustments — not silently folded into totals.
+        $discountDetail = $this->adjustmentsToArray($line, [AdjustmentType::Discount, AdjustmentType::Promotion]);
+
+        if (! $allocated->isZero()) {
+            $discountDetail[] = [
+                'type' => AdjustmentType::Discount->value,
+                'label' => 'Cart discount (allocated)',
+                'amount' => $this->rounding->round($allocated)->getMinorAmount()->toInt(),
+                'currency' => $allocated->getCurrency()->getCurrencyCode(),
+                'source' => 'cart_allocation',
+                'affects_total' => true,
+                'data' => ['allocated' => true],
+            ];
+        }
+
         $order->lines()->save(new OrderLine([
             'purchasable_type' => $line->purchasableType,
             'purchasable_id' => $line->purchasableId,
@@ -230,7 +247,7 @@ final class PlaceOrder
             'line_total' => $this->rounding->round($line->total()->plus($allocated)),
             'snapshot' => $snapshot,
             'tax_detail' => $this->adjustmentsToArray($line, [AdjustmentType::Tax]),
-            'discount_detail' => $this->adjustmentsToArray($line, [AdjustmentType::Discount, AdjustmentType::Promotion]),
+            'discount_detail' => $discountDetail,
         ]));
     }
 
