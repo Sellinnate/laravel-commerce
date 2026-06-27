@@ -7,3 +7,12 @@ parameters:
         - src
         - database
     tmpDir: build/phpstan
+    # Eloquent's Scope interface is generic on Laravel 13 but not on Laravel 12.
+    # Annotating the generic would break the L12 analysis and vice-versa, so we
+    # tolerate this single cross-version difference. Unmatched ignores are not
+    # reported, so the rule is a no-op on the version where it does not apply.
+    reportUnmatchedIgnoredErrors: false
+    ignoreErrors:
+        -
+            message: '#implements generic interface Illuminate\\Database\\Eloquent\\Scope but does not specify its types#'
+            path: src/Tenancy/TenantScope.php
