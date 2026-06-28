@@ -632,14 +632,21 @@ final class InventoryManager implements StockKeeper, StockResolver
 
     public function heldQuantity(string $referenceType, string $referenceId, string $type, string $id, ?string $tenantId): int
     {
+        $reservations = (new StockReservation)->getTable();
+
+        // Count only holds in ACTIVE warehouses, symmetric with holdingReserved()
+        // so the cart's own-hold add-back never adds back a hold that ATP never
+        // subtracted (which would let totals exceed real stock).
         return (int) StockReservation::withoutTenantScope()
-            ->where('reference_type', $referenceType)
-            ->where('reference_id', $referenceId)
-            ->where('purchasable_type', $type)
-            ->where('purchasable_id', $id)
-            ->when($tenantId === null, fn (Builder $q) => $q->whereNull('tenant_id'), fn (Builder $q) => $q->where('tenant_id', $tenantId))
+            ->where($reservations.'.reference_type', $referenceType)
+            ->where($reservations.'.reference_id', $referenceId)
+            ->where($reservations.'.purchasable_type', $type)
+            ->where($reservations.'.purchasable_id', $id)
+            ->when($tenantId === null, fn (Builder $q) => $q->whereNull($reservations.'.tenant_id'), fn (Builder $q) => $q->where($reservations.'.tenant_id', $tenantId))
+            ->join($this->warehouseTable(), $reservations.'.warehouse_id', '=', $this->warehouseTable().'.id')
+            ->where($this->warehouseTable().'.active', true)
             ->holding($this->now())
-            ->sum('quantity');
+            ->sum($reservations.'.quantity');
     }
 
     private function holdingReserved(string $type, string $id, ?string $tenantId, Carbon $moment): int

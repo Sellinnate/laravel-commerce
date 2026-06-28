@@ -187,6 +187,23 @@ it('excludes inactive warehouses from available-to-promise', function (): void {
     expect($this->inventory->availableToPromise('product', 'p1', null))->toBe(4);
 });
 
+it('counts held quantity only in active warehouses', function (): void {
+    // A hold stuck in a deactivated warehouse must not be added back to the
+    // cart's available figure (ATP never subtracted it).
+    $closed = Warehouse::create(['code' => 'closed', 'name' => 'Closed', 'active' => false]);
+    StockReservation::create([
+        'warehouse_id' => $closed->id,
+        'purchasable_type' => 'product',
+        'purchasable_id' => 'p1',
+        'quantity' => 5,
+        'status' => ReservationStatus::Active,
+        'reference_type' => 'commerce.cart',
+        'reference_id' => 'c1',
+    ]);
+
+    expect($this->inventory->heldQuantity('commerce.cart', 'c1', 'product', 'p1', null))->toBe(0);
+});
+
 it('does not subtract holds in an inactive warehouse from ATP', function (): void {
     // Active default stock, plus a separate warehouse that holds units and is
     // then deactivated.
