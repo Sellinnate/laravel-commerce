@@ -4,6 +4,8 @@ description: "A headless, catalog-agnostic commerce domain engine for Laravel."
 type: concept
 ---
 
+![Laravel Commerce — agnostic carts & orders](/assets/laravel-commerce-banner.webp)
+
 # Laravel Commerce
 
 **The transactional heart for any Laravel app that sells something.** Laravel Commerce is a

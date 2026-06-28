@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/laravel-commerce-banner.webp" alt="Laravel Commerce — agnostic carts &amp; orders" width="100%">
+</p>
+
 # Laravel Commerce
 
 [![Tests](https://github.com/sellinnate/laravel-commerce/actions/workflows/run-tests.yml/badge.svg)](https://github.com/sellinnate/laravel-commerce/actions/workflows/run-tests.yml)
