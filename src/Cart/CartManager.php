@@ -18,10 +18,13 @@ use Selli\Commerce\Contracts\GiftCardValidator;
 use Selli\Commerce\Contracts\PriceResolver;
 use Selli\Commerce\Contracts\Purchasable;
 use Selli\Commerce\Contracts\PurchasableResolver;
+use Selli\Commerce\Contracts\StockKeeper;
+use Selli\Commerce\Contracts\StockResolver;
 use Selli\Commerce\Contracts\Taxable;
 use Selli\Commerce\Enums\AdjustmentType;
 use Selli\Commerce\Enums\CartStatus;
 use Selli\Commerce\Enums\MergeStrategy;
+use Selli\Commerce\Enums\ReservationTiming;
 use Selli\Commerce\Events\Cart\CartCleared;
 use Selli\Commerce\Events\Cart\CartCreated;
 use Selli\Commerce\Events\Cart\CartMerged;
@@ -54,6 +57,8 @@ final class CartManager
         private readonly Dispatcher $events,
         private readonly CouponValidator $couponValidator,
         private readonly GiftCardValidator $giftCardValidator,
+        private readonly StockResolver $stockResolver,
+        private readonly StockKeeper $stockKeeper,
     ) {}
 
     public function find(string $id): ?Cart
@@ -148,6 +153,7 @@ final class CartManager
                 $existing->save();
 
                 $cart->load('items');
+                $this->syncStockHold($cart, $purchasable->getPurchasableType(), $purchasable->getPurchasableId());
                 $this->touch($cart);
                 $this->events->dispatch(new ItemUpdatedInCart($cart, $existing));
 
@@ -168,6 +174,7 @@ final class CartManager
             ]);
 
             $cart->load('items');
+            $this->syncStockHold($cart, $purchasable->getPurchasableType(), $purchasable->getPurchasableId());
             $this->touch($cart);
             $this->events->dispatch(new ItemAddedToCart($cart, $item));
 
@@ -205,6 +212,7 @@ final class CartManager
 
             $item->save();
             $cart->load('items');
+            $this->syncStockHold($cart, $item->purchasable_type, $item->purchasable_id);
 
             $this->touch($cart);
             $this->events->dispatch(new ItemUpdatedInCart($cart, $item));
@@ -223,6 +231,7 @@ final class CartManager
 
             $item->delete();
             $cart->load('items');
+            $this->syncStockHold($cart, $item->purchasable_type, $item->purchasable_id);
 
             $this->touch($cart);
             $this->events->dispatch(new ItemRemovedFromCart($cart, $item));
@@ -243,6 +252,7 @@ final class CartManager
     {
         $cart->items()->delete();
         $cart->load('items');
+        $this->releaseStockHolds($cart);
 
         $this->touch($cart);
         $this->events->dispatch(new CartCleared($cart));
@@ -275,6 +285,13 @@ final class CartManager
             $source->load('items');
             $target->load('items');
 
+            // Release the source's stock holds up front so the availability
+            // checks below weigh the merged totals against only live competing
+            // holds — not the source's own holds, which are being merged in. (A
+            // no-op under the default place-order timing.) The transaction makes
+            // this atomic: a violation rolls the release back too.
+            $this->releaseStockHolds($source);
+
             foreach ($source->items as $sourceItem) {
                 $match = $this->matchLine($target, $sourceItem->purchasable_type, $sourceItem->purchasable_id, $sourceItem->options ?? []);
 
@@ -289,7 +306,9 @@ final class CartManager
                 $category = $this->resolveTaxCategory($purchasable);
 
                 if ($match === null) {
-                    $this->assertAvailableForMerge($sourceItem, $sourceItem->quantity);
+                    // Check the target cart's running total against host
+                    // availability AND inventory ATP, not just the single line.
+                    $this->assertCartQuantityAvailable($target, $purchasable, $sourceItem->purchasable_type, $sourceItem->purchasable_id, $sourceItem->name, $sourceItem->quantity, null);
 
                     $created = $target->items()->create([
                         'purchasable_type' => $sourceItem->purchasable_type,
@@ -315,7 +334,7 @@ final class CartManager
                     MergeStrategy::Replace => $sourceItem->quantity,
                 };
 
-                $this->assertAvailableForMerge($sourceItem, $newQuantity);
+                $this->assertCartQuantityAvailable($target, $purchasable, $sourceItem->purchasable_type, $sourceItem->purchasable_id, $sourceItem->name, $newQuantity, $match->id);
 
                 $match->quantity = $newQuantity;
                 $match->unit_price = $this->mergedUnitPrice($target, $match, $newQuantity);
@@ -341,6 +360,13 @@ final class CartManager
             $source->save();
 
             $target->load('items');
+
+            // Re-hold the target's now-combined line totals (the source's holds
+            // were released up front).
+            foreach ($this->distinctPurchasables($target) as $purchasable) {
+                $this->syncStockHold($target, $purchasable['type'], $purchasable['id']);
+            }
+
             $this->touch($target);
             $this->events->dispatch(new CartMerged($target, $source));
 
@@ -761,6 +787,77 @@ final class CartManager
         if (! $purchasable->isAvailable($total)) {
             throw ProductNotAvailableException::for($name, $total);
         }
+
+        // When the Inventory module tracks this purchasable, also enforce
+        // available-to-promise (on_hand − reserved) so the cart never promises
+        // more than can be fulfilled — unless backorders are allowed, in which
+        // case the shortfall is settled (and annotated) at placement.
+        $available = $this->stockResolver->availableToPromise($type, (string) $id, $cart->tenant_id);
+
+        if ($available === null) {
+            return;
+        }
+
+        // Add back this cart's own current hold (add-to-cart timing) so it never
+        // counts against itself: the hold is about to be recomputed to $total.
+        $available += $this->stockResolver->heldQuantity('commerce.cart', $cart->id, $type, (string) $id, $cart->tenant_id);
+
+        if ($total > $available && ! $this->stockResolver->allowsBackorder($type, (string) $id, $cart->tenant_id)) {
+            throw ProductNotAvailableException::for($name, $total);
+        }
+    }
+
+    /**
+     * When reservations are timed to add-to-cart, hold the cart's current total
+     * quantity of a purchasable (releasing the hold when it falls to zero). A
+     * no-op under the default place-order timing or when not stock-tracked.
+     */
+    private function syncStockHold(Cart $cart, string $type, string $id): void
+    {
+        if (ReservationTiming::fromConfig() !== ReservationTiming::AddToCart) {
+            return;
+        }
+
+        $total = 0;
+
+        foreach ($cart->items as $item) {
+            if ($item->purchasable_type === $type && (string) $item->purchasable_id === (string) $id) {
+                $total += $item->quantity;
+            }
+        }
+
+        $this->stockKeeper->hold($cart->id, $type, (string) $id, $total, $cart->tenant_id);
+    }
+
+    /**
+     * The distinct purchasables present in a cart, for re-syncing per-purchasable
+     * holds after a merge.
+     *
+     * @return list<array{type: string, id: string}>
+     */
+    private function distinctPurchasables(Cart $cart): array
+    {
+        $seen = [];
+
+        foreach ($cart->items as $item) {
+            $key = $item->purchasable_type.'|'.$item->purchasable_id;
+            $seen[$key] = ['type' => $item->purchasable_type, 'id' => (string) $item->purchasable_id];
+        }
+
+        return array_values($seen);
+    }
+
+    /**
+     * Release every stock hold a cart is keeping (clear, or place-order timing
+     * change). A no-op under the default place-order timing.
+     */
+    private function releaseStockHolds(Cart $cart): void
+    {
+        if (ReservationTiming::fromConfig() !== ReservationTiming::AddToCart) {
+            return;
+        }
+
+        $this->stockKeeper->release('commerce.cart', $cart->id, $cart->tenant_id);
     }
 
     /**
@@ -783,15 +880,6 @@ final class CartManager
      * Throw if a live purchasable cannot satisfy the post-merge quantity.
      * Unresolvable purchasables (catalogue removed) are skipped.
      */
-    private function assertAvailableForMerge(CartItem $item, int $quantity): void
-    {
-        $purchasable = $this->purchasables->resolve($item->purchasable_type, $item->purchasable_id);
-
-        if ($purchasable !== null && ! $purchasable->isAvailable($quantity)) {
-            throw ProductNotAvailableException::for($item->name, $quantity);
-        }
-    }
-
     private function assertQuantity(int $quantity): void
     {
         if ($quantity < 1) {

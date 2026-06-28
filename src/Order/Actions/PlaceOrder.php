@@ -14,6 +14,7 @@ use Selli\Commerce\Cart\Models\Cart;
 use Selli\Commerce\Contracts\OrderNumberGenerator;
 use Selli\Commerce\Contracts\PurchasableResolver;
 use Selli\Commerce\Contracts\RoundingStrategy;
+use Selli\Commerce\Contracts\StockKeeper;
 use Selli\Commerce\Enums\AdjustmentType;
 use Selli\Commerce\Enums\CartStatus;
 use Selli\Commerce\Events\Order\OrderPlaced;
@@ -41,6 +42,7 @@ final class PlaceOrder
         private readonly PurchasableResolver $purchasables,
         private readonly RoundingStrategy $rounding,
         private readonly Dispatcher $events,
+        private readonly StockKeeper $stock,
     ) {}
 
     /**
@@ -127,8 +129,11 @@ final class PlaceOrder
                 $calculation->adjustments(),
             );
 
+            // Both `_adjustments` and `_backorders` are server-owned: strip any
+            // caller-supplied value so a checkout cannot forge redemptions or a
+            // backorder record. They are (re)written below from server state.
             $metadata = $order->metadata ?? [];
-            unset($metadata['_adjustments']);
+            unset($metadata['_adjustments'], $metadata['_backorders']);
 
             if ($adjustments !== []) {
                 $metadata['_adjustments'] = $adjustments;
@@ -156,6 +161,29 @@ final class PlaceOrder
 
             foreach ($lines as $index => $line) {
                 $this->persistLine($order, $line, $allocations[$index]);
+            }
+
+            // Fulfil stock under the same transaction and the same lock: this is
+            // where oversell is prevented by construction. A shortfall with the
+            // backorder policy denying it throws and rolls the whole order back;
+            // backordered lines are recorded truthfully on the frozen order.
+            $backordered = $this->stock->fulfillOrder(
+                $order->id,
+                array_map(static fn (CalculationLine $l): array => [
+                    'type' => $l->purchasableType,
+                    'id' => $l->purchasableId,
+                    'quantity' => $l->quantity,
+                    'name' => $l->name,
+                ], $lines),
+                $order->tenant_id,
+                $cart->id,
+            );
+
+            if ($backordered !== []) {
+                $metadata = $order->metadata ?? [];
+                $metadata['_backorders'] = $backordered;
+                $order->metadata = $metadata;
+                $order->save();
             }
 
             OrderStateTransition::query()->create([

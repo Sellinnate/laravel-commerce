@@ -28,9 +28,18 @@ use Selli\Commerce\Contracts\OrderRepository;
 use Selli\Commerce\Contracts\PriceResolver;
 use Selli\Commerce\Contracts\PurchasableResolver;
 use Selli\Commerce\Contracts\RoundingStrategy;
+use Selli\Commerce\Contracts\StockKeeper;
+use Selli\Commerce\Contracts\StockResolver;
 use Selli\Commerce\Contracts\TaxResolver;
 use Selli\Commerce\Contracts\TenantContext;
 use Selli\Commerce\Events\Order\OrderPlaced;
+use Selli\Commerce\Inventory\Console\ReleaseExpiredReservations;
+use Selli\Commerce\Inventory\InventoryManager;
+use Selli\Commerce\Inventory\Models\StockItem;
+use Selli\Commerce\Inventory\Models\StockMovement;
+use Selli\Commerce\Inventory\Models\StockReservation;
+use Selli\Commerce\Inventory\Models\Warehouse;
+use Selli\Commerce\Inventory\NullInventory;
 use Selli\Commerce\Order\Models\Order;
 use Selli\Commerce\Order\Models\OrderLine;
 use Selli\Commerce\Order\Models\OrderStateTransition;
@@ -71,7 +80,8 @@ final class CommerceServiceProvider extends PackageServiceProvider
     {
         $package
             ->name('commerce')
-            ->hasConfigFile();
+            ->hasConfigFile()
+            ->hasCommand(ReleaseExpiredReservations::class);
     }
 
     public function packageRegistered(): void
@@ -105,6 +115,10 @@ final class CommerceServiceProvider extends PackageServiceProvider
             'commerce.gift_card' => GiftCard::class,
             'commerce.gift_card_transaction' => GiftCardTransaction::class,
             'commerce.tax_rate' => TaxRate::class,
+            'commerce.warehouse' => Warehouse::class,
+            'commerce.stock_item' => StockItem::class,
+            'commerce.stock_movement' => StockMovement::class,
+            'commerce.stock_reservation' => StockReservation::class,
         ]);
 
         Gate::policy(Order::class, OrderPolicy::class);
@@ -220,6 +234,8 @@ final class CommerceServiceProvider extends PackageServiceProvider
                 : $this->app->make(NullTaxResolver::class);
         });
 
+        $this->bindInventory();
+
         $this->app->bind(CartRepository::class, function (): CartRepository {
             $override = $this->binding(CartRepository::class);
 
@@ -237,6 +253,44 @@ final class CommerceServiceProvider extends PackageServiceProvider
                     'for session or cache storage bind a custom CartRepository via commerce.bindings.'
                 ),
             };
+        });
+    }
+
+    private function bindInventory(): void
+    {
+        // InventoryManager / NullInventory back both seams; they are stateless,
+        // so a fresh instance per resolution is fine (and lets tests fake the
+        // dispatcher after the manager is bound). When the module is off the
+        // null object makes every stock call a no-op and availability falls back
+        // to the host's Purchasable.
+        $resolve = function (): InventoryManager|NullInventory {
+            if (! $this->inventoryEnabled()) {
+                return $this->app->make(NullInventory::class);
+            }
+
+            return $this->app->make(InventoryManager::class);
+        };
+
+        $this->app->bind(StockResolver::class, function () use ($resolve): StockResolver {
+            $override = $this->binding(StockResolver::class);
+
+            if ($override !== null) {
+                /** @var StockResolver */
+                return $this->app->make($override);
+            }
+
+            return $resolve();
+        });
+
+        $this->app->bind(StockKeeper::class, function () use ($resolve): StockKeeper {
+            $override = $this->binding(StockKeeper::class);
+
+            if ($override !== null) {
+                /** @var StockKeeper */
+                return $this->app->make($override);
+            }
+
+            return $resolve();
         });
     }
 
@@ -268,6 +322,11 @@ final class CommerceServiceProvider extends PackageServiceProvider
     private function taxEnabled(): bool
     {
         return Config::boolean('commerce.modules.tax', true);
+    }
+
+    private function inventoryEnabled(): bool
+    {
+        return Config::boolean('commerce.modules.inventory', true);
     }
 
     /**

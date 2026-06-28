@@ -73,7 +73,10 @@
         { "title": "Gift cards", "path": "/modules/pricing/gift-cards", "icon": "gift" },
         { "title": "Tax overview", "path": "/modules/tax/overview", "icon": "receipt" },
         { "title": "Inclusive vs exclusive", "path": "/modules/tax/inclusive-exclusive", "icon": "divide" },
-        { "title": "Jurisdiction & reverse charge", "path": "/modules/tax/jurisdiction", "icon": "globe" }
+        { "title": "Jurisdiction & reverse charge", "path": "/modules/tax/jurisdiction", "icon": "globe" },
+        { "title": "Inventory overview", "path": "/modules/inventory/overview", "icon": "package" },
+        { "title": "Reservations & ATP", "path": "/modules/inventory/reservations", "icon": "clock" },
+        { "title": "Warehouses, ledger & backorder", "path": "/modules/inventory/warehouses-ledger", "icon": "warehouse" }
       ]
     },
     {
