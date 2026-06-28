@@ -122,6 +122,16 @@ final class InventoryManager implements StockKeeper, StockResolver
                 ->lockForUpdate()
                 ->first();
 
+            // Lock EVERY stock row for the purchasable (ordered by id for a
+            // consistent acquisition order) before reading ATP: ATP spans all
+            // warehouses, so locking only the default row would let a concurrent
+            // fulfilment ship from another warehouse and leave this hold
+            // validated against stale, cross-warehouse availability.
+            $this->stockItemQuery($type, $id, $tenantId)
+                ->orderBy($this->stockTable().'.id')
+                ->lockForUpdate()
+                ->get();
+
             $warehouse = $this->warehouse($tenantId, null);
             $item = $this->lockItem($type, $id, $tenantId, $warehouse->id);
 
@@ -229,6 +239,14 @@ final class InventoryManager implements StockKeeper, StockResolver
                 // must never get a free pass to ship (which could oversell) and
                 // must not make on-hand stock look unavailable.
                 $this->releaseExpiredFor($type, $id, $tenantId);
+
+                // Lock every stock row for the purchasable up front, in id order
+                // — the same order hold() uses — so the cross-warehouse fulfilment
+                // and a concurrent hold can never deadlock or race on stale ATP.
+                $this->stockItemQuery($type, $id, $tenantId)
+                    ->orderBy($this->stockTable().'.id')
+                    ->lockForUpdate()
+                    ->get();
 
                 // Consume the originating cart's still-live holds, so held stock
                 // is shipped rather than double-counted. (Its expired holds were
@@ -549,12 +567,18 @@ final class InventoryManager implements StockKeeper, StockResolver
     {
         $default = BackorderPolicy::fromConfig();
 
-        $item = $this->stockItemQuery($type, $id, $tenantId)
+        $overrides = $this->stockItemQuery($type, $id, $tenantId)
             ->whereNotNull('allow_backorder')
-            ->orderByDesc('allow_backorder')
-            ->first();
+            ->get();
 
-        return $item instanceof StockItem ? $item->allowsBackorder($default) : $default->allowsBackorder();
+        if ($overrides->isEmpty()) {
+            return $default->allowsBackorder();
+        }
+
+        // An explicit per-item DENY wins over an allow: a warehouse that forbids
+        // backorder must not be overridden by another that permits it. Backorder
+        // is allowed only when an override says so and none denies.
+        return ! $overrides->contains(fn (StockItem $item): bool => $item->allow_backorder === false);
     }
 
     public function heldQuantity(string $referenceType, string $referenceId, string $type, string $id, ?string $tenantId): int

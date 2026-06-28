@@ -13,6 +13,7 @@ use Selli\Commerce\Events\Inventory\StockReserved;
 use Selli\Commerce\Exceptions\InsufficientStockException;
 use Selli\Commerce\Exceptions\ProductNotAvailableException;
 use Selli\Commerce\Inventory\InventoryManager;
+use Selli\Commerce\Inventory\Models\StockItem;
 use Selli\Commerce\Inventory\Models\StockMovement;
 use Selli\Commerce\Inventory\Models\StockReservation;
 use Selli\Commerce\Inventory\Models\Warehouse;
@@ -220,6 +221,20 @@ it('is idempotent across overlapping expired sweeps', function (): void {
         ->and($this->inventory->releaseExpired())->toBe(0) // already released, not re-counted
         ->and($this->inventory->availableToPromise('product', 'p1', null))->toBe(10); // not double-decremented
     Carbon::setTestNow();
+});
+
+it('lets an explicit per-item backorder deny win over an allow', function (): void {
+    config()->set('commerce.inventory.backorder', 'allow'); // global allow
+    $this->inventory->receive('product', 'p1', 0, warehouseCode: 'wh-a');
+    $this->inventory->receive('product', 'p1', 0, warehouseCode: 'wh-b');
+
+    // One warehouse allows backorder, another explicitly denies it.
+    $items = StockItem::where('purchasable_id', 'p1')->orderBy('id')->get();
+    $items[0]->update(['allow_backorder' => true]);
+    $items[1]->update(['allow_backorder' => false]);
+
+    // The deny must win — a permissive warehouse cannot override a strict one.
+    expect($this->inventory->allowsBackorder('product', 'p1', null))->toBeFalse();
 });
 
 it('isolates stock between tenants', function (): void {
