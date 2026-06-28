@@ -2,7 +2,7 @@
 
 All notable changes to `selli/commerce` will be documented in this file.
 
-## Unreleased
+## 1.0.0 - 2026-06-28
 
 ### Added
 - Core domain: catalog-agnostic `Purchasable` contract with live binding + immutable order snapshot.
