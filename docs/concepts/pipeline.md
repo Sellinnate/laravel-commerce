@@ -89,7 +89,9 @@ See the full walkthrough in the [custom calculator guide](/guides/custom-calcula
 Call `breakdown()` for a serialisable, line-by-line account of how the grand total was reached: every subtotal, every signed adjustment, its source and whether it affected the total. This is what you store on the order, render on an invoice, or diff in a test. The pipeline is pure — same inputs, same output, every time.
 
 ::: callout tip "Modules build on this seam"
-The [Pricing](/modules/pricing/overview), [Tax](/modules/tax/overview) and [Inventory](/modules/inventory/overview) modules are exactly this seam in action: when enabled, they auto-compose their own calculators into the pipeline (Promotion → Coupon → Tax → Gift card → GrandTotal). Leave a module off and it contributes nothing; or take full manual control by listing calculator classes in `commerce.pipeline`. Either way you can add your own calculators (fees, shipping) alongside them.
+The [Pricing](/modules/pricing/overview) and [Tax](/modules/tax/overview) modules are exactly this seam in action: when enabled, they auto-compose their own calculators into the pipeline (Promotion → Coupon → Tax → Gift card → GrandTotal). Leave a module off and it contributes nothing; or take full manual control by listing calculator classes in `commerce.pipeline`. Either way you can add your own calculators (fees, shipping) alongside them.
+
+The [Inventory](/modules/inventory/overview) module is **not** part of total calculation — it plugs into the separate stock-reservation and [order placement](/concepts/order) flow.
 :::
 
 See also: [Money](/concepts/money) · [Cart](/concepts/cart) · [Configuration](/reference/configuration).
