@@ -110,6 +110,7 @@ final class InventoryManager implements StockKeeper, StockResolver
                 ->where('reference_id', $cartId)
                 ->where('purchasable_type', $type)
                 ->where('purchasable_id', $id)
+                ->when($tenantId === null, fn (Builder $q) => $q->whereNull('tenant_id'), fn (Builder $q) => $q->where('tenant_id', $tenantId))
                 ->where('status', ReservationStatus::Active->value)
                 ->lockForUpdate()
                 ->first();
@@ -182,10 +183,11 @@ final class InventoryManager implements StockKeeper, StockResolver
 
     public function release(string $referenceType, string $referenceId, ?string $tenantId): void
     {
-        DB::transaction(function () use ($referenceType, $referenceId): void {
+        DB::transaction(function () use ($referenceType, $referenceId, $tenantId): void {
             $reservations = StockReservation::withoutTenantScope()
                 ->where('reference_type', $referenceType)
                 ->where('reference_id', $referenceId)
+                ->when($tenantId === null, fn (Builder $q) => $q->whereNull('tenant_id'), fn (Builder $q) => $q->where('tenant_id', $tenantId))
                 ->where('status', ReservationStatus::Active->value)
                 ->lockForUpdate()
                 ->get();
@@ -302,6 +304,7 @@ final class InventoryManager implements StockKeeper, StockResolver
             ->where('reference_id', $cartId)
             ->where('purchasable_type', $type)
             ->where('purchasable_id', $id)
+            ->when($tenantId === null, fn (Builder $q) => $q->whereNull('tenant_id'), fn (Builder $q) => $q->where('tenant_id', $tenantId))
             ->where('status', ReservationStatus::Active->value)
             ->lockForUpdate()
             ->get();

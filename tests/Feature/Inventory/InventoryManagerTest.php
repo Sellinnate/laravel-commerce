@@ -206,6 +206,21 @@ it('isolates stock between tenants', function (): void {
         ->and($this->inventory->availableToPromise('product', 'p1', null))->toBeNull();
 });
 
+it('scopes reservation lookups to the tenant', function (): void {
+    $this->inventory->receive('product', 'p1', 10, tenantId: 'tenant-a');
+    $this->inventory->receive('product', 'p1', 10, tenantId: 'tenant-b');
+
+    // The same cart id exists in both tenants (an id collision).
+    $this->inventory->hold('cart-x', 'product', 'p1', 4, 'tenant-a');
+    $this->inventory->hold('cart-x', 'product', 'p1', 4, 'tenant-b');
+
+    // Releasing tenant A's hold must leave tenant B's untouched.
+    $this->inventory->release('commerce.cart', 'cart-x', 'tenant-a');
+
+    expect($this->inventory->availableToPromise('product', 'p1', 'tenant-a'))->toBe(10)
+        ->and($this->inventory->availableToPromise('product', 'p1', 'tenant-b'))->toBe(6);
+});
+
 it('dispatches reserve and release events', function (): void {
     Event::fake([StockReserved::class, StockReleased::class]);
     $inventory = app(InventoryManager::class);
