@@ -98,6 +98,14 @@ final class InventoryManager implements StockKeeper, StockResolver
     public function hold(string $cartId, string $type, string $id, int $quantity, ?string $tenantId): void
     {
         DB::transaction(function () use ($cartId, $type, $id, $quantity, $tenantId): void {
+            // Only hold stock for purchasables that are already stock-tracked. An
+            // untracked one (a service, an unlimited digital good) has no stock
+            // row, so creating one here would wrongly start tracking it — and
+            // under a deny policy would block adding it to the cart at all.
+            if (! $this->stockItemQuery($type, $id, $tenantId)->exists()) {
+                return;
+            }
+
             // Clean expired holds first so the counts are accurate, then take the
             // row lock — concurrent holds serialise here.
             $this->releaseExpiredFor($type, $id, $tenantId);

@@ -24,6 +24,20 @@ function heldProduct(InventoryManager $inventory, int $onHand): Product
     return $product;
 }
 
+it('does not track or block an untracked purchasable on add', function (): void {
+    config()->set('commerce.inventory.backorder', 'deny');
+
+    // A service with no stock row: adding it must not create a stock_items row
+    // or fail, even with add-to-cart holds enabled and a deny policy.
+    $service = Product::create(['name' => 'Consulting', 'price_cents' => 20000]);
+    $cart = $this->carts->create('EUR');
+    $this->carts->add($cart, $service, 5);
+
+    expect($cart->fresh()->items)->toHaveCount(1)
+        ->and($this->inventory->availableToPromise('product', $service->getPurchasableId(), null))->toBeNull()
+        ->and(StockReservation::where('reference_id', $cart->id)->count())->toBe(0);
+});
+
 it('holds stock when a line is added to the cart', function (): void {
     $product = heldProduct($this->inventory, 10);
     $cart = $this->carts->create('EUR');
