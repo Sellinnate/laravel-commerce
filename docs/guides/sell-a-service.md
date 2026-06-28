@@ -1,6 +1,7 @@
 ---
 title: "Recipe: Sell a Service"
 description: "Make a non-physical Plan model purchasable, build a cart and place an order — no Inventory module required."
+type: guide
 ---
 
 # Recipe: Sell a Service
@@ -56,7 +57,7 @@ class Plan extends Model implements Purchasable
 ```
 
 ::: callout info "No Inventory module needed"
-Inventory is a [planned module](/concepts/pipeline) for stock-tracked goods. A digital service has no stock, so you simply return `true` from `isAvailable()` and skip it entirely.
+The [Inventory module](/modules/inventory/overview) is for stock-tracked goods. A digital service has no stock, so it simply has no stock row — the module treats it as *untracked* and availability falls back to your `isAvailable()` (return `true`). You can leave Inventory enabled for your physical lines and it won't interfere with services.
 :::
 
 ## 2. Register the morph key

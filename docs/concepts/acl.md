@@ -1,6 +1,7 @@
 ---
 title: "Access Control"
 description: "Every sensitive action passes through a Laravel policy — permissive by default for headless apps, overridable, and combined with tenant isolation."
+type: concept
 ---
 
 # Access Control

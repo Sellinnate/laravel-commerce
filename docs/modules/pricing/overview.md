@@ -1,6 +1,7 @@
 ---
 title: "Pricing & Promotions"
 description: "An optional module that adds price books, coupons, promotions and gift cards — composed into the calculation pipeline as ordered, explainable adjustments."
+type: concept
 ---
 
 # Pricing & Promotions

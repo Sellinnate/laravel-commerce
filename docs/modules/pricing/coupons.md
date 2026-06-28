@@ -1,6 +1,7 @@
 ---
 title: "Coupons"
 description: "Customer-entered discount codes — percentage or fixed — validated with distinct typed exceptions, enforced usage limits and minimum spend, applied as Discount adjustments and recorded on placement."
+type: concept
 ---
 
 # Coupons
@@ -108,9 +109,13 @@ mutates its totals: the listener simply records the actual consumption
 append-only under a row lock (`usage_count` is the source of truth, idempotent
 per order). Under rare concurrency (two carts applying the same limited coupon
 and checking out at once) the recorded count can transiently exceed the cap;
-hard, concurrency-proof enforcement requires *reserving* the coupon at
-application time (decrement on apply, release on abandonment), planned for a
-future release alongside gift-card and stock reservation. A `per_customer_limit`
+hard, concurrency-proof enforcement would require *reserving* the coupon at
+application time (decrement on apply, release on abandonment). The engine
+deliberately does **not** do this — it never mutates a redemption count from an
+in-flight cart, only from a placed order — so usage limits are enforced at apply
+time and the recorded count stays the truth. If you need a hard cap under heavy
+contention, reserve the code in your application layer. (Stock, by contrast, *is*
+hard-reserved at checkout under a lock by the [Inventory module](/modules/inventory/overview).) A `per_customer_limit`
 coupon also requires an **identified customer** — it cannot be applied to an
 anonymous guest cart.
 :::

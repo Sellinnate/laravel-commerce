@@ -1,6 +1,7 @@
 ---
 title: "Events Reference"
 description: "The full catalogue of cart and order domain events — when each fires and its payload — plus listener, queue and broadcast notes."
+type: reference
 ---
 
 # Events Reference

@@ -1,6 +1,7 @@
 ---
 title: "Recipe: Place & Transition an Order"
 description: "Convert a cart to an order, then walk it pending → confirmed → processing → completed, attribute each move to an actor, and read the transition log."
+type: guide
 ---
 
 # Recipe: Place & Transition an Order

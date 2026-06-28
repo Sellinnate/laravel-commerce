@@ -1,6 +1,7 @@
 ---
 title: "Database Schema"
 description: "Table-by-table reference for the engine's tables — columns, types, ULID keys, tenant scoping, money pairs, append-only tables and soft deletes."
+type: reference
 ---
 
 # Database Schema

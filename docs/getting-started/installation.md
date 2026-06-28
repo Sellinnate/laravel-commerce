@@ -1,6 +1,7 @@
 ---
 title: "Installation"
 description: "Install selli/commerce via Composer and publish its config and migrations."
+type: guide
 ---
 
 # Installation

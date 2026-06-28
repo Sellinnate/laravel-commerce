@@ -1,6 +1,7 @@
 ---
 title: "Purchasable"
 description: "The catalog-agnostic contract that lets any model be sold, and the hybrid live-binding plus immutable-snapshot model behind it."
+type: concept
 ---
 
 # Purchasable

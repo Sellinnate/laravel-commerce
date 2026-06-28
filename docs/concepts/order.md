@@ -1,6 +1,7 @@
 ---
 title: "Order"
 description: "The immutable order aggregate, its guarded state machine, the append-only transition log, and conversion from a cart in a single transaction."
+type: concept
 ---
 
 # Order

@@ -1,6 +1,7 @@
 ---
 title: "Money"
 description: "Every amount is a Brick Money value in minor units with an explicit currency — never a float — stored as a two-column pair and rounded centrally."
+type: concept
 ---
 
 # Money

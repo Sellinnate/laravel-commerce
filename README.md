@@ -35,6 +35,9 @@ Commerce is **one engine, tested to the bone, reused across N projects**.
   single-tenant and SaaS alike.
 - **Audited** — every domain event persisted append-only; optional event sourcing for the Order
   aggregate.
+- **Optional modules** — toggle each independently: **Pricing** (price books, coupons, promotions,
+  gift cards), **Tax** (per-line jurisdictions, inclusive/exclusive, EU exemption & reverse charge)
+  and **Inventory** (per-warehouse stock, TTL reservations, oversell prevention under a lock).
 
 ## Requirements
 
@@ -96,8 +99,8 @@ composer format          # Pint
 
 ## Roadmap
 
-The core (cart, order, calculation pipeline, multi-tenancy, multi-currency, audit, ACL) ships first.
-Pricing & Promotions, Tax and Inventory are modular and land in subsequent releases, followed by
+The core (cart, order, calculation pipeline, multi-tenancy, multi-currency, audit, ACL) and the
+**Pricing & Promotions**, **Tax** and **Inventory** modules have shipped. Next on the roadmap:
 Payments orchestration, Fulfillment and optional REST/GraphQL/Filament surfaces.
 
 ## License

@@ -1,6 +1,7 @@
 ---
 title: "Price Books"
 description: "Segment- and quantity-aware price lists resolved by a most-specific-wins rule: segment beats default, then priority, then quantity tier, then lowest amount — with a fallback to the purchasable's own price."
+type: concept
 ---
 
 # Price Books

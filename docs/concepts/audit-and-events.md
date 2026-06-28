@@ -1,6 +1,7 @@
 ---
 title: "Audit & Events"
 description: "A two-level audit model — an always-on immutable domain-event trail and opt-in event sourcing — over a catalogue of standard Laravel events."
+type: concept
 ---
 
 # Audit & Events

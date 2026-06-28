@@ -1,6 +1,7 @@
 ---
 title: "What is Laravel Commerce?"
 description: "The mental model: a headless commerce engine, not a store."
+type: guide
 ---
 
 # What is Laravel Commerce?

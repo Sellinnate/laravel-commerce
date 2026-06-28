@@ -1,6 +1,7 @@
 ---
 title: "Quick Start"
 description: "From a purchasable model to a placed order in five steps."
+type: guide
 ---
 
 # Quick Start

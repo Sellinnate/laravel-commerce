@@ -1,6 +1,7 @@
 ---
 title: "Jurisdiction & resolution"
 description: "How a rate is resolved from country, region, priority and validity — the TaxResolver contract and RateResult, binding a custom external provider, the tax context, exemptions and the B2B intra-EU reverse charge."
+type: concept
 ---
 
 # Jurisdiction & resolution

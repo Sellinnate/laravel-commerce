@@ -1,6 +1,7 @@
 ---
 title: "Reservations & available-to-promise"
 description: "How available-to-promise is computed, the two reservation timings (add-to-cart vs place-order), the TTL that frees abandoned carts, and the command that sweeps expired holds."
+type: concept
 ---
 
 # Reservations & available-to-promise
