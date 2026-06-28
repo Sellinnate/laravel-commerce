@@ -1,6 +1,7 @@
 ---
 title: "Contracts Reference"
 description: "Every contract in the engine, its methods, default implementation, and how to override it via config commerce.bindings."
+type: reference
 ---
 
 # Contracts Reference

@@ -1,6 +1,7 @@
 ---
 title: "Configuration Reference"
 description: "Every key in config/commerce.php — defaults, accepted values and meaning."
+type: reference
 ---
 
 # Configuration Reference

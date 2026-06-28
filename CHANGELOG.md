@@ -25,4 +25,10 @@ All notable changes to `selli/commerce` will be documented in this file.
   - Per-purchasable tax category via the optional `Taxable` contract; cart `setTaxContext()` for jurisdiction and B2B/exemption flags.
   - B2B intra-EU reverse charge and customer/product exemptions, each annotated with a reason on the order for fiscal justification.
   - Tax computed on the discounted base and frozen per order line.
+- **Inventory module** (toggleable via `commerce.modules.inventory`):
+  - Stock tracked per `Purchasable` × warehouse through an append-only ledger (`stock_movements`); `on_hand`/`reserved` on `stock_items` is a lock-friendly projection. Available-to-promise is `on_hand − non-expired holds`, counting only active warehouses.
+  - Reservations with a TTL and two timings (`reserve_on`: `place_order` or `add_to_cart`); abandoned-cart holds lapse and are swept by the `commerce:inventory:release-expired` command.
+  - Oversell prevention by construction: `PlaceOrder` fulfils lines under a row lock inside its transaction; a shortfall with backorder denied throws `InsufficientStockException` and rolls the order back.
+  - Backorder policy (`deny`/`allow`) with a per-item override (deny-wins); allowed backorders recorded truthfully on the frozen order and emitting `BackorderCreated`. Events `StockReserved`, `StockReleased`, `StockDepleted`, `BackorderCreated`.
+  - Multi-warehouse allocation by priority; tenant-scoped throughout; duplicate rows under the null-tenant race prevented by deterministic primary keys. Core seams `StockResolver`/`StockKeeper` with a `NullInventory` no-op when off.
 - Full docmd documentation site and a Pest suite at 90%+ coverage, PHPStan max, Pint.

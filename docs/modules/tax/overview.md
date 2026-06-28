@@ -1,6 +1,7 @@
 ---
 title: "Tax"
 description: "An optional module that resolves jurisdiction-aware tax rates and inserts a TaxCalculator into the pipeline — recording per-line, explainable tax frozen onto every order."
+type: concept
 ---
 
 # Tax

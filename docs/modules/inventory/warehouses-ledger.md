@@ -1,6 +1,7 @@
 ---
 title: "Warehouses, ledger & backorder"
 description: "Per-warehouse stock, the append-only stock ledger that on_hand reconciles to, fulfilment under a lock across warehouses, and the backorder policy (deny vs allow) with a per-item override."
+type: concept
 ---
 
 # Warehouses, ledger & backorder

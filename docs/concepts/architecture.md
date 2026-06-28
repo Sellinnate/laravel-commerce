@@ -1,6 +1,7 @@
 ---
 title: "Architecture"
 description: "Ports & adapters, a pure domain, and module boundaries."
+type: concept
 ---
 
 # Architecture

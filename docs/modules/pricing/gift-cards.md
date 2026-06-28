@@ -1,6 +1,7 @@
 ---
 title: "Gift Cards"
 description: "Stored-balance instruments applied as a tender against the payable total — capped at their balance and the remaining due — with a row-locked balance decrement and an append-only ledger on placement."
+type: concept
 ---
 
 # Gift Cards
@@ -104,10 +105,11 @@ balance**, so the ledger can never go negative and the card is never debited
 twice for the same order (redemption is idempotent per order). If the *same*
 card is applied to several carts that check out at almost the same moment, their
 totals may each reflect more tender than the card ultimately holds — the money
-ledger stays correct, but tender is honoured best-effort. Hard reservation of
-gift-card balance (decrement on apply, release on abandonment) is planned for a
-future release; the same applies to coupon usage limits, which are enforced at
-application time.
+ledger stays correct, but tender is honoured best-effort. As with [coupon usage
+limits](/modules/pricing/coupons), the engine deliberately does **not** reserve
+gift-card balance from an in-flight cart — it debits only from a placed order, so
+the money ledger is always the truth. (Physical stock, by contrast, *is*
+hard-reserved at checkout under a lock by the [Inventory module](/modules/inventory/overview).)
 :::
 
 See also: [Cart](/concepts/cart) · [Money](/concepts/money) · [Pipeline](/concepts/pipeline) · [Audit & events](/concepts/audit-and-events).

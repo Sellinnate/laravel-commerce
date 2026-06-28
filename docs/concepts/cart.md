@@ -1,6 +1,7 @@
 ---
 title: "Cart"
 description: "The mutable cart aggregate, its lifecycle, and the CartManager operations — idempotent add, distinct option lines, merge strategies and typed exceptions."
+type: concept
 ---
 
 # Cart

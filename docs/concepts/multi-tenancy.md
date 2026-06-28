@@ -1,6 +1,7 @@
 ---
 title: "Multi-tenancy"
 description: "Tenancy-agnostic isolation via a TenantContext seam, a global scope that filters and auto-stamps every domain row, and zero cost when single-tenant."
+type: concept
 ---
 
 # Multi-tenancy

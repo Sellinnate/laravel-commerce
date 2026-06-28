@@ -35,11 +35,20 @@ the [`Purchasable`](/concepts/purchasable) contract becomes sellable — `Produc
 `Room`, `TicketType` — and the engine orchestrates cart, calculation and order around it.
 :::
 
+## Optional modules
+
+Each module is independent and toggled by a config flag — enable what you sell, leave the rest off (no dead code, no pipeline cost):
+
+- **[Pricing](/modules/pricing/overview)** — price books, coupons, promotions and gift cards.
+- **[Tax](/modules/tax/overview)** — per-line tax by jurisdiction, inclusive vs exclusive, EU exemption and reverse charge.
+- **[Inventory](/modules/inventory/overview)** — per-warehouse stock, reservations with a TTL and oversell prevention under a lock.
+
 ## How these docs are organised
 
 - **[Getting Started](/getting-started/what-is-laravel-commerce)** — from zero to your first order.
 - **[Concepts](/concepts/architecture)** — *how it works and why*: the Purchasable contract,
   money, the cart, the order state machine, the calculation pipeline, multi-tenancy, audit and ACL.
+- **[Modules](/modules/pricing/overview)** — the optional Pricing, Tax and Inventory modules.
 - **[Guides](/guides/sell-a-service)** — task-focused recipes you can copy-paste.
 - **[Reference](/reference/configuration)** — config, contracts, events and the database schema.
 

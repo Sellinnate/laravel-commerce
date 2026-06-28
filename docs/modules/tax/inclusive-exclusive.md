@@ -1,6 +1,7 @@
 ---
 title: "Inclusive vs exclusive tax"
 description: "The two pricing modes — tax derived from the gross or added on top — with exact formulas, worked €-examples, the discounted base, and how tax is frozen per line on the order."
+type: concept
 ---
 
 # Inclusive vs exclusive tax

@@ -1,6 +1,7 @@
 ---
 title: "Inventory overview"
 description: "The optional Inventory module: per-warehouse stock, available-to-promise, reservations with a TTL, oversell prevention under a lock, backorders and an append-only stock ledger — and how it plugs into the cart and order without touching the host catalogue."
+type: concept
 ---
 
 # Inventory overview

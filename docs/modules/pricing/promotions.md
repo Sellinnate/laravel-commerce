@@ -1,6 +1,7 @@
 ---
 title: "Promotions"
 description: "An automatic condition→action rule engine: matched promotions discount the subtotal, grant free shipping, and combine under Exclusive, Cumulative or BestOf stacking policies."
+type: concept
 ---
 
 # Promotions

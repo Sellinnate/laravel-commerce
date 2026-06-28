@@ -1,6 +1,7 @@
 ---
 title: "Recipe: Write a Custom Calculator"
 description: "Implement the Calculator contract to add an eco-fee or loyalty discount, push a signed Adjustment, and slot it into the pipeline before GrandTotalCalculator."
+type: guide
 ---
 
 # Recipe: Write a Custom Calculator
