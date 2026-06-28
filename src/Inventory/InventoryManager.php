@@ -107,11 +107,10 @@ final class InventoryManager implements StockKeeper, StockResolver
             }
 
             // Clean expired holds first so the counts are accurate, then take the
-            // row lock — concurrent holds serialise here.
+            // locks. Lock this cart's reservation row BEFORE the stock-item row,
+            // the same order as release()/releaseExpired(), so an overlapping TTL
+            // sweep can never deadlock against a concurrent hold.
             $this->releaseExpiredFor($type, $id, $tenantId);
-
-            $warehouse = $this->warehouse($tenantId, null);
-            $item = $this->lockItem($type, $id, $tenantId, $warehouse->id);
 
             $existing = StockReservation::withoutTenantScope()
                 ->where('reference_type', 'commerce.cart')
@@ -122,6 +121,9 @@ final class InventoryManager implements StockKeeper, StockResolver
                 ->where('status', ReservationStatus::Active->value)
                 ->lockForUpdate()
                 ->first();
+
+            $warehouse = $this->warehouse($tenantId, null);
+            $item = $this->lockItem($type, $id, $tenantId, $warehouse->id);
 
             if ($quantity <= 0) {
                 // The line is gone (removed, or merged away): give the hold back.
@@ -446,7 +448,11 @@ final class InventoryManager implements StockKeeper, StockResolver
             $reservation->warehouse_id,
         );
 
-        $item->reserved = max(0, $item->reserved - $reservation->quantity);
+        // Record the delta actually applied (clamped at zero) so the ledger
+        // always reconciles with the projection, even if reserved were somehow
+        // already below this reservation's quantity.
+        $applied = min($reservation->quantity, $item->reserved);
+        $item->reserved -= $applied;
         $item->version++;
         $item->save();
 
@@ -455,7 +461,7 @@ final class InventoryManager implements StockKeeper, StockResolver
             $reservation->purchasable_type,
             $reservation->purchasable_id,
             StockMovementType::Release,
-            -$reservation->quantity,
+            -$applied,
             $reservation->tenant_id,
             'reservation released',
             $reservation->reference_type,
@@ -565,12 +571,20 @@ final class InventoryManager implements StockKeeper, StockResolver
 
     private function holdingReserved(string $type, string $id, ?string $tenantId, Carbon $moment): int
     {
+        $reservations = (new StockReservation)->getTable();
+
+        // Count holds only in ACTIVE warehouses, symmetric with the on_hand sum
+        // in availableToPromise(): a hold in a deactivated warehouse must not be
+        // subtracted from stock that warehouse never contributed, which would
+        // otherwise block deliverable units in active warehouses.
         return (int) StockReservation::withoutTenantScope()
-            ->where('purchasable_type', $type)
-            ->where('purchasable_id', $id)
-            ->when($tenantId === null, fn (Builder $q) => $q->whereNull('tenant_id'), fn (Builder $q) => $q->where('tenant_id', $tenantId))
+            ->where($reservations.'.purchasable_type', $type)
+            ->where($reservations.'.purchasable_id', $id)
+            ->when($tenantId === null, fn (Builder $q) => $q->whereNull($reservations.'.tenant_id'), fn (Builder $q) => $q->where($reservations.'.tenant_id', $tenantId))
+            ->join($this->warehouseTable(), $reservations.'.warehouse_id', '=', $this->warehouseTable().'.id')
+            ->where($this->warehouseTable().'.active', true)
             ->holding($moment)
-            ->sum('quantity');
+            ->sum($reservations.'.quantity');
     }
 
     /**

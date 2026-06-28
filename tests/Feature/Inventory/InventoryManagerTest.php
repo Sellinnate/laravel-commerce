@@ -186,6 +186,30 @@ it('excludes inactive warehouses from available-to-promise', function (): void {
     expect($this->inventory->availableToPromise('product', 'p1', null))->toBe(4);
 });
 
+it('does not subtract holds in an inactive warehouse from ATP', function (): void {
+    // Active default stock, plus a separate warehouse that holds units and is
+    // then deactivated.
+    $this->inventory->receive('product', 'p1', 10); // default (active)
+
+    $closed = Warehouse::create(['code' => 'closed', 'name' => 'Closed', 'active' => true]);
+    $this->inventory->receive('product', 'p1', 5, warehouseCode: 'closed');
+    StockReservation::create([
+        'warehouse_id' => $closed->id,
+        'purchasable_type' => 'product',
+        'purchasable_id' => 'p1',
+        'quantity' => 3,
+        'status' => ReservationStatus::Active,
+        'reference_type' => 'commerce.cart',
+        'reference_id' => 'c1',
+    ]);
+    $closed->update(['active' => false]);
+
+    // ATP counts neither the closed warehouse's on_hand nor its hold: just the
+    // active default's 10 — the 3-unit hold there does not block deliverable
+    // active stock.
+    expect($this->inventory->availableToPromise('product', 'p1', null))->toBe(10);
+});
+
 it('is idempotent across overlapping expired sweeps', function (): void {
     $this->inventory->receive('product', 'p1', 10);
     config()->set('commerce.inventory.reservation_ttl', 30);
