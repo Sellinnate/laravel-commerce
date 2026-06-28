@@ -223,6 +223,35 @@ it('is idempotent across overlapping expired sweeps', function (): void {
     Carbon::setTestNow();
 });
 
+it('keeps a single stock row per warehouse and purchasable', function (): void {
+    $this->inventory->receive('product', 'p1', 5);
+    $this->inventory->receive('product', 'p1', 3);
+
+    // get-or-create with a deterministic key never duplicates the row, so
+    // on_hand accumulates rather than splitting (which would inflate ATP).
+    expect(StockItem::where('purchasable_id', 'p1')->count())->toBe(1)
+        ->and($this->inventory->availableToPromise('product', 'p1', null))->toBe(8);
+});
+
+it('ignores a backorder override on an inactive warehouse', function (): void {
+    config()->set('commerce.inventory.backorder', 'allow');
+    $this->inventory->receive('product', 'p1', 0); // active default, no override
+
+    $closed = Warehouse::create(['code' => 'closed', 'name' => 'Closed', 'active' => false]);
+    StockItem::create([
+        'warehouse_id' => $closed->id,
+        'purchasable_type' => 'product',
+        'purchasable_id' => 'p1',
+        'on_hand' => 0,
+        'reserved' => 0,
+        'allow_backorder' => false,
+    ]);
+
+    // The deny lives only in a deactivated warehouse fulfilment never uses, so
+    // the global allow stands.
+    expect($this->inventory->allowsBackorder('product', 'p1', null))->toBeTrue();
+});
+
 it('lets an explicit per-item backorder deny win over an allow', function (): void {
     config()->set('commerce.inventory.backorder', 'allow'); // global allow
     $this->inventory->receive('product', 'p1', 0, warehouseCode: 'wh-a');

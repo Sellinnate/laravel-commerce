@@ -6,6 +6,7 @@ namespace Selli\Commerce\Inventory;
 
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
@@ -525,14 +526,33 @@ final class InventoryManager implements StockKeeper, StockResolver
             return $item;
         }
 
-        return StockItem::create([
-            'tenant_id' => $tenantId,
-            'warehouse_id' => $warehouseId,
-            'purchasable_type' => $type,
-            'purchasable_id' => $id,
-            'on_hand' => 0,
-            'reserved' => 0,
-        ]);
+        // A nullable tenant_id makes the composite unique ineffective for
+        // single-tenant rows (NULLs are distinct), so two concurrent first-time
+        // creates could insert duplicate rows for the same warehouse+purchasable
+        // — and duplicates would double-count on_hand and oversell. Give the row
+        // a DETERMINISTIC primary key derived from its identity, so concurrent
+        // creates collide on the PK; the loser re-reads the winner's locked row.
+        $rowId = $this->deterministicId('stock', $tenantId ?? '', $warehouseId, $type, $id);
+
+        try {
+            return StockItem::create([
+                'id' => $rowId,
+                'tenant_id' => $tenantId,
+                'warehouse_id' => $warehouseId,
+                'purchasable_type' => $type,
+                'purchasable_id' => $id,
+                'on_hand' => 0,
+                'reserved' => 0,
+            ]);
+        } catch (QueryException $e) {
+            $existing = StockItem::withoutTenantScope()->whereKey($rowId)->lockForUpdate()->first();
+
+            if ($existing instanceof StockItem) {
+                return $existing;
+            }
+
+            throw $e;
+        }
     }
 
     /**
@@ -545,10 +565,6 @@ final class InventoryManager implements StockKeeper, StockResolver
         $warehouse = Warehouse::withoutTenantScope()
             ->where('code', $code)
             ->when($tenantId === null, fn (Builder $q) => $q->whereNull('tenant_id'), fn (Builder $q) => $q->where('tenant_id', $tenantId))
-            // Deterministic pick: a null-tenant unique index does not stop two
-            // concurrent first-time creates from inserting a duplicate default,
-            // so always resolve the oldest row by its monotonic ULID — every
-            // automatic operation then targets the same warehouse.
             ->orderBy('id')
             ->first();
 
@@ -556,19 +572,52 @@ final class InventoryManager implements StockKeeper, StockResolver
             return $warehouse;
         }
 
-        return Warehouse::create([
-            'tenant_id' => $tenantId,
-            'code' => $code,
-            'name' => ucfirst($code).' Warehouse',
-        ]);
+        // Same null-tenant race as stock items: a deterministic primary key makes
+        // two concurrent first-time creates collide on the PK instead of
+        // inserting a duplicate default warehouse.
+        $rowId = $this->deterministicId('warehouse', $tenantId ?? '', $code);
+
+        try {
+            return Warehouse::create([
+                'id' => $rowId,
+                'tenant_id' => $tenantId,
+                'code' => $code,
+                'name' => ucfirst($code).' Warehouse',
+            ]);
+        } catch (QueryException $e) {
+            $existing = Warehouse::withoutTenantScope()->whereKey($rowId)->first();
+
+            if ($existing instanceof Warehouse) {
+                return $existing;
+            }
+
+            throw $e;
+        }
+    }
+
+    /**
+     * A stable, collision-resistant 26-char identifier derived from a row's
+     * identity, so concurrent first-time creates collide on the primary key
+     * rather than inserting a duplicate (the composite unique can't help when
+     * tenant_id is null).
+     */
+    private function deterministicId(string ...$parts): string
+    {
+        return strtoupper(substr(hash('sha256', implode('|', $parts)), 0, 26));
     }
 
     public function allowsBackorder(string $type, string $id, ?string $tenantId): bool
     {
         $default = BackorderPolicy::fromConfig();
 
+        // Only consider overrides in ACTIVE warehouses, consistent with ATP and
+        // fulfilment: a stale deny on a deactivated warehouse must not force the
+        // whole purchasable to deny.
         $overrides = $this->stockItemQuery($type, $id, $tenantId)
-            ->whereNotNull('allow_backorder')
+            ->join($this->warehouseTable(), $this->stockTable().'.warehouse_id', '=', $this->warehouseTable().'.id')
+            ->where($this->warehouseTable().'.active', true)
+            ->whereNotNull($this->stockTable().'.allow_backorder')
+            ->select($this->stockTable().'.*')
             ->get();
 
         if ($overrides->isEmpty()) {
