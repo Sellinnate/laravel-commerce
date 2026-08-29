@@ -29,7 +29,7 @@
     ],
     "require": {
         "php": "^8.3",
-        "brick/money": "^0.10 || ^0.11",
+        "brick/money": "^0.14.1",
         "illuminate/contracts": "^11.0 || ^12.0 || ^13.0",
         "spatie/laravel-model-states": "^2.7 || ^3.0",
         "spatie/laravel-package-tools": "^1.16"
